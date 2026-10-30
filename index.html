@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#c52227">
+<title>Trực nhật ATTS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Lexend:wght@500;600;700&display=swap">
+<style>
+/* Layout: white page in ATTS brand red; one narrow column app, tab bar on top, cards per task; calendar grids scroll inside their own box */
+:root{
+  --bg:#ffffff; --surface:#ffffff; --tint:#f7f4f4; --line:#e6dfdf; --fg:#1d1a1a; --muted:#6b6262;
+  --accent:#c52227; --accent-soft:#fbe6e6; --on-accent:#ffffff;
+  --warn:#9a5a00; --warn-soft:#fdf0d9; --bad:#7a1418; --bad-soft:#f3d6d7; --ok:#1d7a4a; --ok-soft:#e0f2e7;
+  --f-display:"Lexend",system-ui,sans-serif; --f-body:"Be Vietnam Pro",system-ui,sans-serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.wrap{max-width:880px;margin:0 auto;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:18px}
+body::before{content:"";position:fixed;inset:0 0 auto;height:calc(5px + env(safe-area-inset-top,0px));background:var(--accent);z-index:10}
+.brand{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.logo{height:44px;width:auto;display:block}
+header{border-bottom:2px solid var(--accent);padding-bottom:14px;display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px}
+h1{font-family:var(--f-display);font-size:26px;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.place{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.today{color:var(--muted);font-size:14px}
+nav{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px;overflow-x:auto}
+nav button{flex:1;min-width:max-content;border:0;background:none;color:var(--muted);font:600 14px var(--f-body);padding:9px 12px;border-radius:7px;cursor:pointer}
+nav button[aria-selected="true"]{background:var(--accent);color:var(--on-accent)}
+button{font-family:var(--f-body)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h2{font-family:var(--f-display);font-size:17px;margin:0;font-weight:600}
+.section{display:flex;flex-direction:column;gap:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card.alert{border-color:var(--warn)}
+.card.danger{border-color:var(--bad)}
+.thead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tname{font-weight:700;font-size:16px}
+.freq{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
+.who{font-family:var(--f-display);font-size:28px;font-weight:600;line-height:1.15;word-break:break-word}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.muted{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.queue{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:12px;color:var(--muted)}
+.btn{border:0;border-radius:9px;padding:10px 14px;font-weight:600;font-size:14px;cursor:pointer;background:var(--accent);color:var(--on-accent)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+.btn.small{padding:6px 10px;font-size:13px}
+.link{background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;align-self:flex-start}
+.note{font-size:13px;color:var(--muted)}
+.empty{background:var(--surface);border:1px dashed var(--line);border-radius:12px;padding:24px;text-align:center;color:var(--muted)}
+.banner{border-radius:10px;padding:12px 14px;font-size:14px;background:var(--warn-soft);color:var(--fg);border:1px solid var(--warn)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:var(--surface);color:var(--muted);padding:7px 12px;font-weight:600;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.pager{display:flex;align-items:center;gap:6px}
+.pager b{min-width:150px;text-align:center;font-family:var(--f-display);font-weight:600}
+.scroll{overflow-x:auto;border-radius:12px;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;background:var(--tint)}
+td.num,th.num{text-align:right}
+tr:last-child td{border-bottom:0}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(104px,1fr));min-width:728px}
+.cal .dh{padding:8px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;background:var(--tint);border-bottom:1px solid var(--line)}
+.cal .cell{min-height:92px;padding:6px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:3px;font-size:12px}
+.cal .cell:nth-child(7n){border-right:0}
+.cal .cell.out{opacity:.4}
+.cal .cell.off{background:var(--tint)}
+.cal .cell.now{box-shadow:inset 0 0 0 2px var(--accent)}
+.dnum{font-weight:700;font-size:13px}
+.ent{border-radius:5px;padding:2px 5px;background:var(--accent-soft);color:var(--fg);line-height:1.3;word-break:break-word}
+.ent.done{background:var(--ok-soft)} .ent.miss{background:var(--warn-soft)} .ent.fine{background:var(--bad-soft)}
+.ent small{color:var(--muted);display:block;font-size:10px}
+.period{display:flex;flex-wrap:wrap;gap:8px}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:60px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+input[type=text],input[type=number],select{font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);min-width:0}
+input[type=text]{flex:1 1 160px}
+.list{display:flex;flex-direction:column}
+.li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
+.li:last-child{border-bottom:0}
+.li .grow{flex:1 1 140px;min-width:0;font-weight:600;word-break:break-word}
+.icon{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:7px;width:32px;height:32px;cursor:pointer;font-size:14px}
+.icon.del{color:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:6px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--fg);color:#fff;padding:10px 16px;border-radius:9px;font-size:14px;z-index:20;max-width:calc(100% - 32px)}
+.dayview .li .grow small{display:block;font-weight:400;color:var(--muted)}
+@media (prefers-reduced-motion:no-preference){.card{transition:border-color .2s}}
+html,body{margin:0}
+body{font-size:15px;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+[hidden]{display:none!important}
+img{max-width:100%}
+.modal{position:fixed;inset:0;background:rgba(29,26,26,.45);display:flex;align-items:center;justify-content:center;z-index:30;padding:16px}
+.sheet{background:var(--surface);border-radius:14px;padding:20px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px}
+.pin{font:600 28px var(--f-display);letter-spacing:.5em;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;width:100%;color:var(--fg);background:var(--surface)}
+.err{color:var(--accent);font-size:13px;min-height:1em}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <img class="logo" alt="ATTS" src="data:image/png;base64,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">
+      <div>
+        <div class="place">Văn phòng Ocean Park 1</div>
+        <h1>Trực nhật văn phòng</h1>
+      </div>
+    </div>
+    <div class="today" id="todayLabel"></div>
+  </header>
+
+  <nav role="tablist">
+    <button role="tab" data-tab="home" aria-selected="true">Hôm nay</button>
+    <button role="tab" data-tab="cal" aria-selected="false">Lịch</button>
+    <button role="tab" data-tab="stats" aria-selected="false">Thống kê</button>
+    <button role="tab" data-tab="setup" aria-selected="false">Cài đặt</button>
+  </nav>
+
+  <div id="ro" class="note" hidden>Lần đầu bấm "Đã làm xong" hoặc sửa cài đặt, máy sẽ hỏi mã PIN của văn phòng. Nhập đúng một lần là máy nhớ.</div>
+  <div id="offline" class="banner" hidden>Không kết nối được dữ liệu. Kiểm tra mạng rồi tải lại trang.</div>
+
+  <main id="view"></main>
+</div>
+<div id="toast" class="toast" hidden></div>
+<div id="pinModal" class="modal" hidden>
+  <form id="fPin" class="sheet">
+    <h2>Nhập mã PIN văn phòng</h2>
+    <div class="note">Chỉ cần nhập một lần trên máy này.</div>
+    <input id="pinInput" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" aria-label="Mã PIN">
+    <div id="pinErr" class="err"></div>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost small" id="pinCancel">Huỷ</button><button class="btn small">Xác nhận</button></div>
+  </form>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* ===== DÁN CẤU HÌNH FIREBASE CỦA ANH VÀO ĐÂY (Bước 3 trong README) ===== */
+const firebaseConfig = {
+  apiKey: "DAN_API_KEY_VAO_DAY",
+  authDomain: "truc-nhat-atts.firebaseapp.com",
+  projectId: "truc-nhat-atts",
+  storageBucket: "truc-nhat-atts.appspot.com",
+  messagingSenderId: "",
+  appId: ""
+};
+</script>
+
+<script>
+(() => {
+const DEFAULT_CFG = {members:[], fine:50000, reminders:2, offDays:[0,6]};
+const FREQ = {day:"Hằng ngày", week:"Hằng tuần", month:"Hằng tháng"};
+const WD = ["CN","T2","T3","T4","T5","T6","T7"];
+let db=null, fs=null, uid=null, unlocked=false, canWrite=true, ready={cfg:false,tasks:false,logs:false};
+let cfg = {...DEFAULT_CFG}, tasks = {}, logs = [];
+let tab="home", calMode="week", calRef=null, statPeriod="this", lastRunDay=null, busy=false;
+
+// ---------- dates ----------
+const pad=n=>String(n).padStart(2,"0");
+const fmt=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parse=k=>{const[y,m,d]=k.split("-").map(Number);return new Date(y,m-1,d||1,12)};
+const addDays=(k,n)=>{const d=parse(k);d.setDate(d.getDate()+n);return fmt(d)};
+const todayKey=()=>fmt(new Date());
+const monday=k=>{const d=parse(k);d.setDate(d.getDate()-((d.getDay()+6)%7));return fmt(d)};
+const isOff=k=>(cfg.offDays||[]).includes(parse(k).getDay());
+const validDay=k=>{let g=0;while(isOff(k)&&g++<7)k=addDays(k,1);return k};
+const keyOf=(f,dk)=>f==="day"?dk:f==="week"?monday(dk):dk.slice(0,7);
+const curKey=f=>keyOf(f,todayKey());
+function nextKey(f,k){
+  if(f==="day") return validDay(addDays(k,1));
+  if(f==="week") return addDays(k,7);
+  let[y,m]=k.split("-").map(Number); m++; if(m>12){m=1;y++} return `${y}-${pad(m)}`;
+}
+const dShort=k=>{const d=parse(k);return `${WD[d.getDay()]} ${pad(d.getDate())}/${pad(d.getMonth()+1)}`};
+function keyLabel(f,k){
+  if(f==="day") return dShort(k);
+  if(f==="week") return `tuần ${pad(parse(k).getDate())}/${pad(parse(k).getMonth()+1)}`;
+  const[y,m]=k.split("-"); return `tháng ${Number(m)}/${y}`;
+}
+const money=n=>(Number(n)||0).toLocaleString("vi-VN")+"đ";
+
+// ---------- members / rotation ----------
+const M=()=>cfg.members||[];
+const memberById=id=>M().find(m=>m.id===id);
+const nameOf=(id,fallback)=>memberById(id)?.name||fallback||"(đã xoá)";
+function idxOf(id){const i=M().findIndex(m=>m.id===id);return i<0?0:i}
+function nextMember(id){const n=M().length;if(!n)return null;return M()[(idxOf(id)+1)%n].id}
+function memberAt(id,k){const n=M().length;if(!n)return null;return M()[(idxOf(id)+k)%n]}
+const sortedTasks=()=>Object.values(tasks).sort((a,b)=>(a.order||0)-(b.order||0)||a.name.localeCompare(b.name));
+
+// ---------- catch-up: missed periods -> reminder -> fine ----------
+function catchUp(t){
+  const n={...t}; const out=[]; const ck=curKey(n.freq); let g=0;
+  if(n.freq==="day"){const v=validDay(n.dueKey); if(v!==n.dueKey) n.dueKey=v;}
+  while(n.dueKey<ck && g++<90){
+    const mem=memberById(n.curId)||M()[0];
+    if(mem){
+      n.curId=mem.id; n.miss=(n.miss||0)+1;
+      const base={taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:n.dueKey,at:Date.now()};
+      out.push({id:`miss_${t.id}_${n.dueKey}`,...base,type:"miss",n:n.miss});
+      if(n.miss>(cfg.reminders??2)){
+        out.push({id:`fine_${t.id}_${n.dueKey}`,...base,type:"fine",amount:cfg.fine??50000,paid:false});
+        n.miss=0; n.curId=nextMember(mem.id);
+      }
+    }
+    n.dueKey=nextKey(n.freq,n.dueKey);
+  }
+  if(n.dueKey<ck) n.dueKey=n.freq==="day"?validDay(ck):ck;
+  const changed=n.dueKey!==t.dueKey||n.curId!==t.curId||(n.miss||0)!==(t.miss||0);
+  return {n,out,changed};
+}
+async function runCatchUp(){
+  if(!db||!unlocked||busy||!ready.cfg||!ready.tasks) return;
+  const work=sortedTasks().map(catchUp).filter(r=>r.changed||r.out.length);
+  lastRunDay=todayKey();
+  if(!work.length) return;
+  busy=true;
+  try{
+    const lease=await db.doc("meta/lock").acquire({holder:"v"+Math.random().toString(36).slice(2),ttlMs:20000});
+    if(!lease.acquired) return;
+    for(const {n,out} of work){
+      for(const l of out){const {id,...body}=l; await db.doc("logs/"+id).set(body);}
+      const {id,...tb}=n; await db.doc("tasks/"+id).set(tb);
+    }
+  }catch(e){console.warn(e)} finally{busy=false}
+}
+
+// ---------- actions ----------
+async function markDone(tid){
+  const t=tasks[tid]; if(!t||!M().length) return;
+  if(t.dueKey>curKey(t.freq)) return;
+  const mem=memberById(t.curId)||M()[0];
+  try{
+    await db.doc(`logs/done_${t.id}_${t.dueKey}`).set({taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"done",prevMiss:t.miss||0,at:Date.now()});
+    const {id,...tb}=t;
+    await db.doc("tasks/"+t.id).set({...tb,curId:nextMember(mem.id),miss:0,dueKey:nextKey(t.freq,t.dueKey)});
+    toast(`Đã ghi nhận ${mem.name} làm xong "${t.name}". Lượt sau: ${nameOf(nextMember(mem.id))}.`);
+  }catch(e){fail(e)}
+}
+async function undoDone(tid){
+  const t=tasks[tid]; const l=lastDone(tid); if(!t||!l) return;
+  try{
+    const {id,...tb}=t;
+    await db.doc("tasks/"+t.id).set({...tb,curId:l.memberId,dueKey:l.key,miss:l.prevMiss||0});
+    await db.doc("logs/"+l.id).delete();
+    toast("Đã hoàn tác.");
+  }catch(e){fail(e)}
+}
+function lastDone(tid){
+  const t=tasks[tid]; if(!t) return null;
+  const l=logs.filter(x=>x.taskId===tid&&x.type==="done").sort((a,b)=>b.at-a.at)[0];
+  if(!l) return null;
+  return nextKey(t.freq,l.key)===t.dueKey&&t.curId===nextMember(l.memberId)?l:null;
+}
+async function saveCfg(patch){
+  cfg={...cfg,...patch}; render();
+  try{await db.doc("config/main").set(cfg)}catch(e){fail(e)}
+}
+function fail(e){console.warn(e);if(e?.code==="permission-denied"){unlocked=false;toast("Cần nhập lại mã PIN văn phòng.")}else toast("Chưa lưu được, kiểm tra mạng rồi thử lại.")}
+// ---------- PIN ----------
+let pinResolve=null;
+function ensureUnlocked(){
+  if(unlocked) return Promise.resolve(true);
+  const m=document.getElementById("pinModal"); m.hidden=false;
+  document.getElementById("pinErr").textContent=""; const i=document.getElementById("pinInput"); i.value=""; setTimeout(()=>i.focus(),50);
+  return new Promise(r=>pinResolve=r);
+}
+function closePin(ok){document.getElementById("pinModal").hidden=true;if(pinResolve){pinResolve(ok);pinResolve=null}}
+document.getElementById("pinCancel").addEventListener("click",()=>{closePin(false);render()});
+document.getElementById("fPin").addEventListener("submit",async e=>{
+  e.preventDefault(); e.stopPropagation();
+  const pin=document.getElementById("pinInput").value.trim(); if(!pin) return;
+  try{
+    await fs.doc("unlocks/"+uid).set({pin,at:Date.now()});
+    unlocked=true; document.getElementById("ro").hidden=true; closePin(true); toast("Đã mở khoá máy này."); runCatchUp();
+  }catch(err){document.getElementById("pinErr").textContent=err?.code==="permission-denied"?"Mã PIN không đúng. Thử lại.":"Không kiểm tra được, kiểm tra mạng."}
+});
+let tt; function toast(m){const el=document.getElementById("toast");el.textContent=m;el.hidden=false;clearTimeout(tt);tt=setTimeout(()=>el.hidden=true,3200)}
+
+// ---------- assignment for any period ----------
+function assign(t,key){
+  const ls=logs.filter(l=>l.taskId===t.id&&l.key===key);
+  const pick=ls.find(l=>l.type==="done")||ls.find(l=>l.type==="fine")||ls.find(l=>l.type==="miss");
+  if(key<t.dueKey) return pick?{name:pick.memberName||nameOf(pick.memberId),status:pick.type,log:pick}:null;
+  if(!M().length) return null;
+  let k=0,c=t.dueKey,g=0; while(c<key&&g++<500){c=nextKey(t.freq,c);k++}
+  if(c!==key) return null;
+  const m=memberAt(t.curId,k);
+  return {name:m?.name,status:key===t.dueKey?(t.miss?"late":"due"):"future",miss:t.miss||0};
+}
+function missStreak(t){
+  return logs.filter(l=>l.taskId===t.id&&l.type==="miss"&&l.memberId===t.curId).sort((a,b)=>b.at-a.at).slice(0,t.miss||0).map(l=>l.key);
+}
+
+// ---------- render ----------
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const view=()=>document.getElementById("view");
+function render(){
+  const d=new Date();
+  document.getElementById("todayLabel").textContent=`${["Chủ nhật","Thứ hai","Thứ ba","Thứ tư","Thứ năm","Thứ sáu","Thứ bảy"][d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+  document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
+  ({home:renderHome,cal:renderCal,stats:renderStats,setup:renderSetup})[tab]();
+}
+function noMembersBox(){return `<div class="empty">Chưa có nhân viên trong danh sách trực. <br><button class="btn small" data-go="setup" style="margin-top:10px">Thêm nhân viên</button></div>`}
+
+function renderHome(){
+  const ts=sortedTasks();
+  if(!ready.tasks){view().innerHTML=`<div class="empty">Đang tải lịch trực...</div>`;return}
+  if(!ts.length){view().innerHTML=`<div class="empty">Chưa có việc nào. Vào Cài đặt để thêm việc như đổ rác, tưới cây.</div>`;return}
+  const late=ts.filter(t=>t.miss>0&&M().length);
+  let h="";
+  if(!M().length) h+=noMembersBox();
+  if(late.length){
+    h+=`<div class="banner"><b>Cần nhắc:</b> `+late.map(t=>`${esc(nameOf(t.curId))} chưa làm "${esc(t.name)}" (nhắc lần ${t.miss}/${cfg.reminders})`).join("; ")+`. Quên thêm ${cfg.reminders-Math.max(...late.map(t=>t.miss))+1} lần nữa sẽ bị phạt ${money(cfg.fine)}.</div>`;
+  }
+  const groups=[["day","Việc hôm nay"],["week","Việc tuần này"],["month","Việc tháng này"]];
+  for(const[f,label] of groups){
+    const g=ts.filter(t=>t.freq===f); if(!g.length) continue;
+    h+=`<section class="section"><h2>${label}</h2><div class="grid">`+g.map(card).join("")+`</div></section>`;
+  }
+  const recent=[...logs].sort((a,b)=>b.at-a.at).slice(0,8);
+  if(recent.length){
+    h+=`<section class="section"><h2>Ghi nhận gần đây</h2><div class="card"><div class="list">`+recent.map(l=>`<div class="li"><span class="grow">${esc(l.memberName||nameOf(l.memberId))} <span class="note">· ${esc(l.taskName)} · ${keyLabel(l.freq,l.key)}</span></span>${statusChip(l.type,l.n,l.amount)}</div>`).join("")+`</div></div></section>`;
+  }
+  view().innerHTML=`<div class="section" style="gap:22px">${h}</div>`;
+}
+function statusChip(type,n,amount){
+  if(type==="done") return `<span class="chip ok">Đã làm</span>`;
+  if(type==="miss") return `<span class="chip warn">Quên · nhắc lần ${n||1}</span>`;
+  if(type==="fine") return `<span class="chip bad">Phạt ${money(amount)}</span>`;
+  return "";
+}
+function card(t){
+  const ck=curKey(t.freq), has=M().length>0;
+  const mem=memberById(t.curId)||M()[0];
+  const notYet=t.dueKey>ck;
+  let chip="", cls="card";
+  if(!has) chip=`<span class="chip muted">Chưa có người</span>`;
+  else if(notYet) chip=`<span class="chip muted">Ngày nghỉ · lượt kế: ${keyLabel(t.freq,t.dueKey)}</span>`;
+  else if(t.miss){
+    const left=cfg.reminders-t.miss+1;
+    chip=`<span class="chip ${t.miss>=cfg.reminders?"bad":"warn"}">Nhắc lần ${t.miss}/${cfg.reminders}</span>`;
+    cls+=t.miss>=cfg.reminders?" danger":" alert";
+  } else chip=`<span class="chip">${t.freq==="day"?"Hôm nay":t.freq==="week"?"Tuần này":"Tháng này"}</span>`;
+  const queue=has?Array.from({length:Math.min(4,M().length-1)},(_,i)=>memberAt(mem.id,i+1)?.name).filter(Boolean):[];
+  const streak=t.miss?missStreak(t):[];
+  const undo=lastDone(t.id);
+  return `<article class="${cls}">
+    <div class="thead"><div><div class="tname">${esc(t.name)}</div><div class="freq">${FREQ[t.freq]}</div></div>${chip}</div>
+    <div class="who">${has?esc(mem.name):"—"}</div>
+    ${t.miss&&streak.length?`<div class="note">Đã quên: ${streak.map(k=>keyLabel(t.freq,k)).join(", ")}. ${t.miss>=cfg.reminders?`Quên thêm lần nữa sẽ phạt ${money(cfg.fine)}.`:"Việc được dời sang hôm nay."}</div>`:""}
+    ${canWrite&&has?`<button class="btn" data-done="${t.id}" ${notYet?"disabled":""}>Đã làm xong</button>`:""}
+    ${queue.length?`<div class="queue">Tiếp theo: ${queue.map(n=>`<span class="chip muted">${esc(n)}</span>`).join("")}</div>`:""}
+    ${undo&&canWrite?`<button class="link" data-undo="${t.id}">Bấm nhầm? Hoàn tác lượt của ${esc(undo.memberName)}</button>`:""}
+  </article>`;
+}
+
+function renderCal(){
+  if(!calRef) calRef=todayKey();
+  const ts=sortedTasks();
+  let title="", body="";
+  const dayEntries=(dk)=>ts.filter(t=>t.freq==="day").map(t=>{
+    if(isOff(dk)) return "";
+    const a=assign(t,dk); if(!a) return "";
+    const cls=a.status==="done"?"done":a.status==="fine"?"fine":a.status==="miss"||a.status==="late"?"miss":"";
+    return `<div class="ent ${cls}"><small>${esc(t.name)}</small>${esc(a.name)}</div>`;
+  }).join("");
+  const periodBox=(f,key)=>ts.filter(t=>t.freq===f).map(t=>{const a=assign(t,key);return `<span class="chip ${a?.status==="done"?"ok":a?.status==="fine"?"bad":a?.status==="miss"||a?.status==="late"?"warn":"muted"}">${esc(t.name)}: ${esc(a?.name||"—")}</span>`}).join("");
+  if(calMode==="day"){
+    title=dShort(calRef)+"/"+parse(calRef).getFullYear();
+    const rows=ts.map(t=>{
+      const key=keyOf(t.freq,calRef);
+      if(t.freq==="day"&&isOff(calRef)) return `<div class="li"><span class="grow">${esc(t.name)}<small>${FREQ[t.freq]}</small></span><span class="chip muted">Ngày nghỉ</span></div>`;
+      const a=assign(t,key);
+      const st=!a?`<span class="chip muted">Chưa có lịch</span>`:a.status==="done"?statusChip("done"):a.status==="fine"?statusChip("fine",0,a.log.amount):a.status==="miss"?statusChip("miss",a.log.n):a.status==="late"?`<span class="chip warn">Đang trễ</span>`:a.status==="due"?`<span class="chip">Đến lượt</span>`:`<span class="chip muted">Dự kiến</span>`;
+      return `<div class="li"><span class="grow">${esc(a?.name||"—")}<small>${esc(t.name)} · ${FREQ[t.freq]}</small></span>${st}</div>`;
+    }).join("");
+    body=`<div class="card dayview"><div class="list">${rows||'<div class="note">Chưa có việc.</div>'}</div></div>`;
+  } else if(calMode==="week"){
+    const mon=monday(calRef); const end=addDays(mon,6);
+    title=`${pad(parse(mon).getDate())}/${pad(parse(mon).getMonth()+1)} – ${pad(parse(end).getDate())}/${pad(parse(end).getMonth()+1)}`;
+    let g=""; for(let i=0;i<7;i++){const dk=addDays(mon,i);g+=`<div class="dh">${dShort(dk)}</div>`}
+    for(let i=0;i<7;i++){const dk=addDays(mon,i);g+=`<div class="cell ${isOff(dk)?"off":""} ${dk===todayKey()?"now":""}">${dayEntries(dk)}</div>`}
+    const wk=periodBox("week",mon), mk=periodBox("month",mon.slice(0,7));
+    body=`${wk||mk?`<div class="period">${wk}${mk}</div>`:""}<div class="scroll"><div class="cal">${g}</div></div>`;
+  } else {
+    const first=calRef.slice(0,7)+"-01"; const start=monday(first);
+    const [y,m]=calRef.split("-").map(Number); title=`Tháng ${m}/${y}`;
+    let g=["T2","T3","T4","T5","T6","T7","CN"].map(w=>`<div class="dh">${w}</div>`).join("");
+    let dk=start;
+    for(let i=0;i<42;i++){
+      const inM=dk.slice(0,7)===first.slice(0,7);
+      if(i>=35&&!inM&&parse(dk).getDay()===1) break;
+      const wkTasks=parse(dk).getDay()===1?ts.filter(t=>t.freq==="week").map(t=>{const a=assign(t,dk);return a?`<div class="ent ${a.status==="done"?"done":a.status==="fine"?"fine":a.status==="miss"||a.status==="late"?"miss":""}"><small>${esc(t.name)} (cả tuần)</small>${esc(a.name)}</div>`:""}).join(""):"";
+      g+=`<div class="cell ${inM?"":"out"} ${isOff(dk)?"off":""} ${dk===todayKey()?"now":""}"><span class="dnum">${parse(dk).getDate()}</span>${wkTasks}${dayEntries(dk)}</div>`;
+      dk=addDays(dk,1);
+    }
+    const mk=periodBox("month",calRef.slice(0,7));
+    body=`${mk?`<div class="period">${mk}</div>`:""}<div class="scroll"><div class="cal">${g}</div></div>`;
+  }
+  view().innerHTML=`<div class="section">
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Kiểu lịch">${[["day","Ngày"],["week","Tuần"],["month","Tháng"]].map(([k,l])=>`<button data-mode="${k}" aria-pressed="${calMode===k}">${l}</button>`).join("")}</div>
+      <div class="pager"><button class="icon" data-nav="-1" aria-label="Trước">‹</button><b>${title}</b><button class="icon" data-nav="1" aria-label="Sau">›</button><button class="btn ghost small" data-nav="0">Hôm nay</button></div>
+    </div>
+    ${!M().length?noMembersBox():""}
+    ${body}
+    <div class="legend"><span class="chip ok">Đã làm</span><span class="chip warn">Quên / đang trễ</span><span class="chip bad">Bị phạt</span><span class="chip">Đến lượt / dự kiến</span></div>
+    <div class="note">Lịch tương lai dự kiến theo thứ tự xoay vòng, giả định mọi người làm đúng hạn. Ai quên thì lịch phía sau lùi theo.</div>
+  </div>`;
+}
+
+function renderStats(){
+  const now=todayKey().slice(0,7);
+  const prev=(()=>{let[y,m]=now.split("-").map(Number);m--;if(m<1){m=12;y--}return `${y}-${pad(m)}`})();
+  const inP=l=>{const mk=l.key.slice(0,7);return statPeriod==="all"||(statPeriod==="this"?mk===now:mk===prev)};
+  const L=logs.filter(inP);
+  const ids=new Set([...M().map(m=>m.id),...L.map(l=>l.memberId)]);
+  const rows=[...ids].map(id=>{
+    const ls=L.filter(l=>l.memberId===id);
+    const fines=ls.filter(l=>l.type==="fine");
+    return {id,name:ls[0]?.memberName&&!memberById(id)?ls[0].memberName+" (đã xoá)":nameOf(id),
+      done:ls.filter(l=>l.type==="done").length, miss:ls.filter(l=>l.type==="miss").length,
+      fines:fines.length, total:fines.reduce((s,l)=>s+(l.amount||0),0), unpaid:fines.filter(l=>!l.paid).reduce((s,l)=>s+(l.amount||0),0)};
+  }).sort((a,b)=>b.done-a.done||a.miss-b.miss);
+  const maxDone=Math.max(1,...rows.map(r=>r.done));
+  const tot=rows.reduce((s,r)=>({done:s.done+r.done,miss:s.miss+r.miss,total:s.total+r.total,unpaid:s.unpaid+r.unpaid}),{done:0,miss:0,total:0,unpaid:0});
+  const fineList=L.filter(l=>l.type==="fine").sort((a,b)=>b.at-a.at);
+  view().innerHTML=`<div class="section" style="gap:18px">
+    <div class="toolbar"><h2>Thống kê theo nhân viên</h2>
+      <div class="seg" role="group" aria-label="Khoảng thời gian">${[["this","Tháng này"],["prev","Tháng trước"],["all","Tất cả"]].map(([k,l])=>`<button data-period="${k}" aria-pressed="${statPeriod===k}">${l}</button>`).join("")}</div></div>
+    <div class="note">Tổng: ${tot.done} lượt làm, ${tot.miss} lần quên, quỹ phạt ${money(tot.total)} (chưa nộp ${money(tot.unpaid)}).</div>
+    ${rows.length?`<div class="scroll"><table>
+      <thead><tr><th>Nhân viên</th><th class="num">Đã làm</th><th></th><th class="num">Quên</th><th class="num">Bị phạt</th><th class="num">Tổng phạt</th><th class="num">Chưa nộp</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td><b>${esc(r.name)}</b></td><td class="num">${r.done}</td><td style="width:22%"><div class="bar"><i style="width:${r.done/maxDone*100}%"></i></div></td><td class="num">${r.miss?`<span class="chip warn">${r.miss}</span>`:0}</td><td class="num">${r.fines}</td><td class="num">${money(r.total)}</td><td class="num">${r.unpaid?`<span class="chip bad">${money(r.unpaid)}</span>`:"0đ"}</td></tr>`).join("")}</tbody>
+    </table></div>`:noMembersBox()}
+    <section class="section"><h2>Danh sách phạt</h2>
+      ${fineList.length?`<div class="card"><div class="list">${fineList.map(l=>`<div class="li"><span class="grow">${esc(l.memberName||nameOf(l.memberId))} <span class="note">· ${esc(l.taskName)} · ${keyLabel(l.freq,l.key)}</span></span><span class="chip ${l.paid?"ok":"bad"}">${l.paid?"Đã nộp":"Chưa nộp"} ${money(l.amount)}</span>${canWrite?`<button class="btn ghost small" data-paid="${l.id}">${l.paid?"Bỏ đánh dấu":"Đánh dấu đã nộp"}</button>`:""}</div>`).join("")}</div></div>`:`<div class="empty">Chưa có ai bị phạt trong khoảng này.</div>`}
+    </section>
+  </div>`;
+}
+
+function renderSetup(){
+  const ts=sortedTasks(); const dis=canWrite?"":"disabled";
+  view().innerHTML=`<div class="section" style="gap:18px">
+    <section class="card"><h2>Nhân viên trực (theo thứ tự xoay vòng)</h2>
+      <div class="list">${M().map((m,i)=>`<div class="li"><span class="grow">${i+1}. ${esc(m.name)}</span>
+        <button class="icon" data-mv="${m.id}" data-d="-1" aria-label="Lên" ${dis}>↑</button><button class="icon" data-mv="${m.id}" data-d="1" aria-label="Xuống" ${dis}>↓</button>
+        <button class="icon del" data-rm="${m.id}" aria-label="Xoá ${esc(m.name)}" ${dis}>✕</button></div>`).join("")||'<div class="note">Chưa có ai. Thêm tên bên dưới.</div>'}</div>
+      <form id="fMem" class="row"><input type="text" id="memName" placeholder="Tên nhân viên, ví dụ: Minh" ${dis}><button class="btn small" ${dis}>Thêm</button></form>
+      <div class="note">Có thể dán nhiều tên, cách nhau bằng dấu phẩy.</div>
+    </section>
+    <section class="card"><h2>Công việc</h2>
+      <div class="list">${ts.map(t=>`<div class="li"><span class="grow">${esc(t.name)} <span class="note">· ${FREQ[t.freq]}</span></span>
+        <label class="note" for="cur_${t.id}">Đang tới lượt</label>
+        <select id="cur_${t.id}" data-cur="${t.id}" ${dis}>${M().map(m=>`<option value="${m.id}" ${m.id===(t.curId||M()[0]?.id)?"selected":""}>${esc(m.name)}</option>`).join("")}</select>
+        <button class="icon del" data-rmt="${t.id}" aria-label="Xoá việc ${esc(t.name)}" ${dis}>✕</button></div>`).join("")||'<div class="note">Chưa có việc.</div>'}</div>
+      <form id="fTask" class="row"><input type="text" id="taskName" placeholder="Tên việc, ví dụ: Lau bàn họp" ${dis}>
+        <select id="taskFreq" ${dis}><option value="day">Hằng ngày</option><option value="week">Hằng tuần</option><option value="month">Hằng tháng</option></select>
+        <button class="btn small" ${dis}>Thêm việc</button></form>
+    </section>
+    <section class="card"><h2>Quy định</h2>
+      <div class="row"><label for="cReminders">Số lần nhắc trước khi phạt</label><input type="number" id="cReminders" min="0" max="10" value="${cfg.reminders}" style="width:80px" ${dis}></div>
+      <div class="row"><label for="cFine">Tiền phạt mỗi lần (đồng)</label><input type="number" id="cFine" min="0" step="10000" value="${cfg.fine}" style="width:130px" ${dis}></div>
+      <div class="row"><span>Ngày nghỉ (không tính việc hằng ngày):</span>
+        ${[6,0].map(d=>`<label><input type="checkbox" data-off="${d}" ${cfg.offDays.includes(d)?"checked":""} ${dis}> ${d===6?"Thứ bảy":"Chủ nhật"}</label>`).join("")}</div>
+      <div class="note">Cách tính: quên lần 1 → nhắc lần 1, việc dời sang hôm sau, vẫn người đó làm. Quên lần ${cfg.reminders} → nhắc lần ${cfg.reminders}. Quên lần ${cfg.reminders+1} → phạt ${money(cfg.fine)} và chuyển lượt cho người tiếp theo. Làm đúng → chuyển ngay người tiếp theo.</div>
+    </section>
+  </div>`;
+}
+
+// ---------- events ----------
+document.addEventListener("click",async e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.tab){tab=b.dataset.tab;render();return}
+  if(b.dataset.go){tab=b.dataset.go;render();return}
+  if(b.dataset.done||b.dataset.undo||b.dataset.paid||b.dataset.mv||b.dataset.rm||b.dataset.rmt){if(!(await ensureUnlocked()))return}
+  if(b.dataset.done){b.disabled=true;await markDone(b.dataset.done);return}
+  if(b.dataset.undo){await undoDone(b.dataset.undo);return}
+  if(b.dataset.mode){calMode=b.dataset.mode;render();return}
+  if(b.dataset.nav!==undefined){
+    const n=Number(b.dataset.nav); if(!calRef) calRef=todayKey();
+    if(n===0) calRef=todayKey();
+    else if(calMode==="day") calRef=addDays(calRef,n);
+    else if(calMode==="week") calRef=addDays(calRef,7*n);
+    else {let[y,m]=calRef.split("-").map(Number);m+=n;if(m>12){m=1;y++}if(m<1){m=12;y--}calRef=`${y}-${pad(m)}-01`}
+    render();return;
+  }
+  if(b.dataset.period){statPeriod=b.dataset.period;render();return}
+  if(b.dataset.paid){const l=logs.find(x=>x.id===b.dataset.paid);if(l){try{await db.doc("logs/"+l.id).update({paid:!l.paid})}catch(err){fail(err)}}return}
+  if(b.dataset.mv){
+    const a=[...M()];const i=a.findIndex(m=>m.id===b.dataset.mv);const j=i+Number(b.dataset.d);
+    if(j<0||j>=a.length) return; [a[i],a[j]]=[a[j],a[i]]; await saveCfg({members:a});return;
+  }
+  if(b.dataset.rm){
+    const m=memberById(b.dataset.rm);
+    if(b.dataset.confirm!=="1"){b.dataset.confirm="1";b.textContent="Xoá?";b.style.width="auto";b.style.padding="0 8px";return}
+    const nxt=nextMember(m.id); const rest=M().filter(x=>x.id!==m.id);
+    for(const t of sortedTasks()) if(t.curId===m.id){const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:rest.length?nxt:null,miss:0})}catch(err){fail(err)}}
+    await saveCfg({members:rest});toast(`Đã xoá ${m.name} khỏi danh sách trực.`);return;
+  }
+  if(b.dataset.rmt){
+    if(b.dataset.confirm!=="1"){b.dataset.confirm="1";b.textContent="Xoá?";b.style.width="auto";b.style.padding="0 8px";return}
+    try{await db.doc("tasks/"+b.dataset.rmt).delete();toast("Đã xoá việc.")}catch(err){fail(err)}return;
+  }
+});
+document.addEventListener("change",async e=>{
+  const el=e.target;
+  if(!(el.dataset.cur||el.id==="cReminders"||el.id==="cFine"||el.dataset.off!==undefined)) return;
+  if(!(await ensureUnlocked())){render();return}
+  if(el.dataset.cur){const t=tasks[el.dataset.cur];const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:el.value,miss:0});toast("Đã đổi người đang tới lượt.")}catch(err){fail(err)}}
+  if(el.id==="cReminders") saveCfg({reminders:Math.max(0,Math.min(10,Number(el.value)||0))});
+  if(el.id==="cFine") saveCfg({fine:Math.max(0,Number(el.value)||0)});
+  if(el.dataset.off!==undefined){const d=Number(el.dataset.off);const s=new Set(cfg.offDays);el.checked?s.add(d):s.delete(d);saveCfg({offDays:[...s]})}
+});
+document.addEventListener("submit",async e=>{
+  e.preventDefault();
+  if(e.target.id!=="fMem"&&e.target.id!=="fTask") return;
+  if(!(await ensureUnlocked())) return;
+  if(e.target.id==="fMem"){
+    const v=document.getElementById("memName").value; const names=v.split(",").map(s=>s.trim()).filter(Boolean);
+    if(!names.length) return;
+    const add=names.map(n=>({id:"m"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name:n}));
+    const wasEmpty=!M().length;
+    await saveCfg({members:[...M(),...add]});
+    if(wasEmpty) for(const t of sortedTasks()){const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:add[0].id,miss:0,dueKey:t.freq==="day"?validDay(curKey("day")):curKey(t.freq)})}catch(err){fail(err)}}
+    toast(`Đã thêm ${names.join(", ")}.`);
+  }
+  if(e.target.id==="fTask"){
+    const name=document.getElementById("taskName").value.trim(); const freq=document.getElementById("taskFreq").value;
+    if(!name) return;
+    const id="t"+Date.now().toString(36);
+    try{await db.doc("tasks/"+id).set({name,freq,order:Object.keys(tasks).length+1,curId:M()[0]?.id||null,miss:0,dueKey:freq==="day"?validDay(curKey("day")):curKey(freq)});toast(`Đã thêm việc "${name}".`)}catch(err){fail(err)}
+  }
+});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){render();if(lastRunDay!==todayKey())runCatchUp()}});
+setInterval(()=>{if(lastRunDay&&lastRunDay!==todayKey()){render();runCatchUp()}},60000);
+
+// ---------- boot ----------
+render();
+function wrap(x){return {id:x.id,exists:x.exists,data:()=>x.data(),metadata:x.metadata}}
+function makeDb(){
+  const D=p=>{const r=fs.doc(p);return {
+    set:d=>r.set(d), update:d=>r.update(d), delete:()=>r.delete(),
+    onSnapshot:(n,er)=>r.onSnapshot(x=>n(wrap(x)),er),
+    acquire:({holder,ttlMs})=>fs.runTransaction(async tx=>{const x=await tx.get(r);const now=Date.now();
+      if(x.exists&&x.data().exp>now&&x.data().holder!==holder) return {acquired:false};
+      tx.set(r,{holder,exp:now+(ttlMs||20000)}); return {acquired:true}})}};
+  const Q=q=>({orderBy:(f,d)=>Q(q.orderBy(f,d)),limit:n=>Q(q.limit(n)),
+    onSnapshot:(n,er)=>q.onSnapshot(x=>n({docs:x.docs.map(wrap),metadata:x.metadata}),er)});
+  return {doc:D,collection:p=>Q(fs.collection(p))};
+}
+(async()=>{
+  try{
+    firebase.initializeApp(firebaseConfig);
+    fs=firebase.firestore();
+    const cred=await new Promise((res,rej)=>{const off=firebase.auth().onAuthStateChanged(u=>{if(u){off();res(u)}},rej);if(!firebase.auth().currentUser)firebase.auth().signInAnonymously().catch(rej)});
+    uid=cred.uid; db=makeDb();
+    try{const u=await fs.doc("unlocks/"+uid).get();unlocked=u.exists}catch(_){unlocked=false}
+    document.getElementById("ro").hidden=unlocked;
+  }catch(e){console.warn(e);document.getElementById("offline").hidden=false;ready={cfg:true,tasks:true,logs:true};render();return}
+  const maybeRun=()=>{if(ready.cfg&&ready.tasks&&ready.logs&&lastRunDay!==todayKey()) runCatchUp()};
+  db.doc("config/main").onSnapshot(s=>{cfg={...DEFAULT_CFG,...(s.exists?s.data():{})};cfg.offDays=[...(cfg.offDays||[])];ready.cfg=true;render();if(!s.metadata.fromCache)maybeRun()},e=>console.warn(e));
+  db.collection("tasks").onSnapshot(s=>{tasks={};s.docs.forEach(d=>tasks[d.id]={id:d.id,...d.data()});ready.tasks=true;render();if(!s.metadata.fromCache)maybeRun()},e=>console.warn(e));
+  db.collection("logs").orderBy("at","desc").limit(1000).onSnapshot(s=>{logs=s.docs.map(d=>({id:d.id,...d.data()}));ready.logs=true;render();if(!s.metadata.fromCache)maybeRun()},e=>console.warn(e));
+})();
+})();
+</script>
+</body>
+</html>
