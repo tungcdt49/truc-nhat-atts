@@ -147,12 +147,12 @@ img{max-width:100%}
 <script>
 /* ===== DÁN CẤU HÌNH FIREBASE CỦA ANH VÀO ĐÂY (Bước 3 trong README) ===== */
 const firebaseConfig = {
-  apiKey: "DAN_API_KEY_VAO_DAY",
-  authDomain: "truc-nhat-atts.firebaseapp.com",
-  projectId: "truc-nhat-atts",
-  storageBucket: "truc-nhat-atts.appspot.com",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyC1Hch_Xg0Q3jKOHFXSSFmJqe6On8PP-tE",
+  authDomain: "atts-truc-nhat.firebaseapp.com",
+  projectId: "atts-truc-nhat",
+  storageBucket: "atts-truc-nhat.firebasestorage.app",
+  messagingSenderId: "643762566578",
+  appId: "1:643762566578:web:bf6d039b9764e5271720ab"
 };
 </script>
 
@@ -547,6 +547,27 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden){render();
 setInterval(()=>{if(lastRunDay&&lastRunDay!==todayKey()){render();runCatchUp()}},60000);
 
 // ---------- boot ----------
+const HINTS={
+  "file":"Anh đang mở file trực tiếp trên máy (file://). Hãy mở bằng link GitHub Pages dạng https://ten-github.github.io/truc-nhat-atts/",
+  "config":"Chưa dán cấu hình Firebase vào index.html (vẫn còn DAN_API_KEY_VAO_DAY). Làm lại Bước 3.",
+  "auth/api-key-not-valid":"apiKey không đúng. Copy lại nguyên khối firebaseConfig ở Bước 3.",
+  "auth/invalid-api-key":"apiKey không đúng. Copy lại nguyên khối firebaseConfig ở Bước 3.",
+  "auth/admin-restricted-operation":"Chưa bật đăng nhập ẩn danh. Authentication → Sign-in method → Anonymous → Enable → Save.",
+  "auth/operation-not-allowed":"Chưa bật đăng nhập ẩn danh. Authentication → Sign-in method → Anonymous → Enable → Save.",
+  "auth/configuration-not-found":"Chưa bật Authentication. Vào Authentication → Get started, rồi bật Anonymous.",
+  "auth/unauthorized-domain":"Chưa thêm tên miền này. Authentication → Settings → Authorized domains → Add domain: "+location.hostname,
+  "auth/operation-not-supported-in-this-environment":"Anh đang mở file trực tiếp trên máy. Hãy mở bằng link GitHub Pages.",
+  "auth/network-request-failed":"Không có mạng hoặc mạng công ty chặn Firebase. Thử bằng 4G trên điện thoại.",
+  "permission-denied":"Firestore từ chối đọc. Kiểm tra đã dán và bấm Publish luật ở Bước 4.",
+  "not-found":"Chưa tạo Firestore Database. Vào Firestore → Create database (Bước 2).",
+  "failed-precondition":"Chưa tạo Firestore Database. Vào Firestore → Create database (Bước 2)."
+};
+function showErr(e){
+  const code=e?.code||e?.message||"unknown";
+  const el=document.getElementById("offline");
+  el.innerHTML="<b>Không kết nối được dữ liệu.</b> "+esc(HINTS[code]||"Gửi mã lỗi này cho người cài đặt app.")+"<br><span class='note'>Mã lỗi: "+esc(code)+"</span>";
+  el.hidden=false;
+}
 render();
 function wrap(x){return {id:x.id,exists:x.exists,data:()=>x.data(),metadata:x.metadata}}
 function makeDb(){
@@ -562,16 +583,18 @@ function makeDb(){
 }
 (async()=>{
   try{
+    if(location.protocol==="file:") throw {code:"file"};
+    if(!firebaseConfig.apiKey||firebaseConfig.apiKey.includes("DAN_API_KEY")) throw {code:"config"};
     firebase.initializeApp(firebaseConfig);
     fs=firebase.firestore();
     const cred=await new Promise((res,rej)=>{const off=firebase.auth().onAuthStateChanged(u=>{if(u){off();res(u)}},rej);if(!firebase.auth().currentUser)firebase.auth().signInAnonymously().catch(rej)});
     uid=cred.uid; db=makeDb();
     try{const u=await fs.doc("unlocks/"+uid).get();unlocked=u.exists}catch(_){unlocked=false}
     document.getElementById("ro").hidden=unlocked;
-  }catch(e){console.warn(e);document.getElementById("offline").hidden=false;ready={cfg:true,tasks:true,logs:true};render();return}
+  }catch(e){console.warn(e);showErr(e);ready={cfg:true,tasks:true,logs:true};render();return}
   const maybeRun=()=>{if(ready.cfg&&ready.tasks&&ready.logs&&lastRunDay!==todayKey()) runCatchUp()};
-  db.doc("config/main").onSnapshot(s=>{cfg={...DEFAULT_CFG,...(s.exists?s.data():{})};cfg.offDays=[...(cfg.offDays||[])];ready.cfg=true;render();if(!s.metadata.fromCache)maybeRun()},e=>console.warn(e));
-  db.collection("tasks").onSnapshot(s=>{tasks={};s.docs.forEach(d=>tasks[d.id]={id:d.id,...d.data()});ready.tasks=true;render();if(!s.metadata.fromCache)maybeRun()},e=>console.warn(e));
+  db.doc("config/main").onSnapshot(s=>{cfg={...DEFAULT_CFG,...(s.exists?s.data():{})};cfg.offDays=[...(cfg.offDays||[])];ready.cfg=true;render();if(!s.metadata.fromCache)maybeRun()},e=>{console.warn(e);showErr(e)});
+  db.collection("tasks").onSnapshot(s=>{tasks={};s.docs.forEach(d=>tasks[d.id]={id:d.id,...d.data()});ready.tasks=true;render();if(!s.metadata.fromCache)maybeRun()},e=>{console.warn(e);showErr(e);ready.tasks=true;render()});
   db.collection("logs").orderBy("at","desc").limit(1000).onSnapshot(s=>{logs=s.docs.map(d=>({id:d.id,...d.data()}));ready.logs=true;render();if(!s.metadata.fromCache)maybeRun()},e=>console.warn(e));
 })();
 })();
