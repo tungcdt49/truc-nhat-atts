@@ -133,9 +133,9 @@ img{max-width:100%}
 <div id="toast" class="toast" hidden></div>
 <div id="pinModal" class="modal" hidden>
   <form id="fPin" class="sheet">
-    <h2>Nhập mã PIN văn phòng</h2>
-    <div class="note">Chỉ cần nhập một lần trên máy này.</div>
-    <input id="pinInput" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" aria-label="Mã PIN">
+    <h2 id="pinTitle">Nhập mã PIN văn phòng</h2>
+    <div class="note" id="pinNote">Chỉ cần nhập một lần trên máy này.</div>
+    <input id="pinInput" class="pin" type="password" inputmode="numeric" maxlength="32" autocomplete="off" aria-label="Mã PIN">
     <div id="pinErr" class="err"></div>
     <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost small" id="pinCancel">Huỷ</button><button class="btn small">Xác nhận</button></div>
   </form>
@@ -161,7 +161,7 @@ const firebaseConfig = {
 const DEFAULT_CFG = {members:[], fine:50000, reminders:2, offDays:[0,6]};
 const FREQ = {day:"Hằng ngày", week:"Hằng tuần", month:"Hằng tháng"};
 const WD = ["CN","T2","T3","T4","T5","T6","T7"];
-let db=null, fs=null, uid=null, unlocked=false, canWrite=true, ready={cfg:false,tasks:false,logs:false};
+let db=null, fs=null, uid=null, unlocked=false, admin=false, canWrite=true, ready={cfg:false,tasks:false,logs:false};
 let cfg = {...DEFAULT_CFG}, tasks = {}, logs = [];
 let tab="home", calMode="week", calRef=null, statPeriod="this", lastRunDay=null, busy=false;
 
@@ -226,10 +226,11 @@ async function runCatchUp(){
   if(!work.length) return;
   busy=true;
   try{
+    const have=new Set(logs.map(l=>l.id));
     const lease=await db.doc("meta/lock").acquire({holder:"v"+Math.random().toString(36).slice(2),ttlMs:20000});
     if(!lease.acquired) return;
     for(const {n,out} of work){
-      for(const l of out){const {id,...body}=l; await db.doc("logs/"+id).set(body);}
+      for(const l of out){if(have.has(l.id))continue;const {id,...body}=l; await db.doc("logs/"+id).set(body);}
       const {id,...tb}=n; await db.doc("tasks/"+id).set(tb);
     }
   }catch(e){console.warn(e)} finally{busy=false}
@@ -266,13 +267,17 @@ async function saveCfg(patch){
   cfg={...cfg,...patch}; render();
   try{await db.doc("config/main").set(cfg)}catch(e){fail(e)}
 }
-function fail(e){console.warn(e);if(e?.code==="permission-denied"){unlocked=false;toast("Cần nhập lại mã PIN văn phòng.")}else toast("Chưa lưu được, kiểm tra mạng rồi thử lại.")}
-// ---------- PIN ----------
-let pinResolve=null;
-function ensureUnlocked(){
-  if(unlocked) return Promise.resolve(true);
-  const m=document.getElementById("pinModal"); m.hidden=false;
-  document.getElementById("pinErr").textContent=""; const i=document.getElementById("pinInput"); i.value=""; setTimeout(()=>i.focus(),50);
+function fail(e){console.warn(e);if(e?.code==="permission-denied")toast("Việc này cần mật khẩu quản lý hoặc mã PIN đã đổi.");else toast("Chưa lưu được, kiểm tra mạng rồi thử lại.")}
+// ---------- PIN (nhân viên) + mật khẩu quản lý ----------
+let pinResolve=null, pinLevel="staff";
+function ensureUnlocked(level="staff"){
+  if(level==="admin"?admin:(unlocked||admin)) return Promise.resolve(true);
+  pinLevel=level;
+  document.getElementById("pinTitle").textContent=level==="admin"?"Nhập mật khẩu quản lý":"Nhập mã PIN văn phòng";
+  document.getElementById("pinNote").textContent=level==="admin"?"Chỉ người quản lý mới được thêm, xoá, đổi lượt và sửa quy định.":"Chỉ cần nhập một lần trên máy này.";
+  const i=document.getElementById("pinInput"); i.setAttribute("inputmode",level==="admin"?"text":"numeric");
+  document.getElementById("pinModal").hidden=false;
+  document.getElementById("pinErr").textContent=""; i.value=""; setTimeout(()=>i.focus(),50);
   return new Promise(r=>pinResolve=r);
 }
 function closePin(ok){document.getElementById("pinModal").hidden=true;if(pinResolve){pinResolve(ok);pinResolve=null}}
@@ -281,10 +286,16 @@ document.getElementById("fPin").addEventListener("submit",async e=>{
   e.preventDefault(); e.stopPropagation();
   const pin=document.getElementById("pinInput").value.trim(); if(!pin) return;
   try{
-    await fs.doc("unlocks/"+uid).set({pin,at:Date.now()});
-    unlocked=true; document.getElementById("ro").hidden=true; closePin(true); toast("Đã mở khoá máy này."); runCatchUp();
-  }catch(err){document.getElementById("pinErr").textContent=err?.code==="permission-denied"?"Mã PIN không đúng. Thử lại.":"Không kiểm tra được, kiểm tra mạng."}
+    if(pinLevel==="admin"){await fs.doc("admins/"+uid).set({pin,at:Date.now()});admin=true;toast("Đã mở khoá quyền quản lý trên máy này.")}
+    else{await fs.doc("unlocks/"+uid).set({pin,at:Date.now()});toast("Đã mở khoá máy này.")}
+    unlocked=true; document.getElementById("ro").hidden=true; closePin(true); render(); runCatchUp();
+  }catch(err){document.getElementById("pinErr").textContent=err?.code==="permission-denied"?(pinLevel==="admin"?"Mật khẩu quản lý không đúng.":"Mã PIN không đúng. Thử lại."):"Không kiểm tra được, kiểm tra mạng."}
 });
+async function lockAdmin(){
+  try{await fs.doc("admins/"+uid).delete()}catch(e){console.warn(e)}
+  admin=false; try{unlocked=(await fs.doc("unlocks/"+uid).get()).exists}catch(_){unlocked=false}
+  toast("Đã khoá quyền quản lý trên máy này."); render();
+}
 let tt; function toast(m){const el=document.getElementById("toast");el.textContent=m;el.hidden=false;clearTimeout(tt);tt=setTimeout(()=>el.hidden=true,3200)}
 
 // ---------- assignment for any period ----------
@@ -361,7 +372,7 @@ function card(t){
     ${t.miss&&streak.length?`<div class="note">Đã quên: ${streak.map(k=>keyLabel(t.freq,k)).join(", ")}. ${t.miss>=cfg.reminders?`Quên thêm lần nữa sẽ phạt ${money(cfg.fine)}.`:"Việc được dời sang hôm nay."}</div>`:""}
     ${canWrite&&has?`<button class="btn" data-done="${t.id}" ${notYet?"disabled":""}>Đã làm xong</button>`:""}
     ${queue.length?`<div class="queue">Tiếp theo: ${queue.map(n=>`<span class="chip muted">${esc(n)}</span>`).join("")}</div>`:""}
-    ${undo&&canWrite?`<button class="link" data-undo="${t.id}">Bấm nhầm? Hoàn tác lượt của ${esc(undo.memberName)}</button>`:""}
+    ${undo&&canWrite&&(admin||Date.now()-undo.at<600000)?`<button class="link" data-undo="${t.id}">Bấm nhầm? Hoàn tác lượt của ${esc(undo.memberName)}</button>`:""}
   </article>`;
 }
 
@@ -445,12 +456,13 @@ function renderStats(){
       <tbody>${rows.map(r=>`<tr><td><b>${esc(r.name)}</b></td><td class="num">${r.done}</td><td style="width:22%"><div class="bar"><i style="width:${r.done/maxDone*100}%"></i></div></td><td class="num">${r.miss?`<span class="chip warn">${r.miss}</span>`:0}</td><td class="num">${r.fines}</td><td class="num">${money(r.total)}</td><td class="num">${r.unpaid?`<span class="chip bad">${money(r.unpaid)}</span>`:"0đ"}</td></tr>`).join("")}</tbody>
     </table></div>`:noMembersBox()}
     <section class="section"><h2>Danh sách phạt</h2>
-      ${fineList.length?`<div class="card"><div class="list">${fineList.map(l=>`<div class="li"><span class="grow">${esc(l.memberName||nameOf(l.memberId))} <span class="note">· ${esc(l.taskName)} · ${keyLabel(l.freq,l.key)}</span></span><span class="chip ${l.paid?"ok":"bad"}">${l.paid?"Đã nộp":"Chưa nộp"} ${money(l.amount)}</span>${canWrite?`<button class="btn ghost small" data-paid="${l.id}">${l.paid?"Bỏ đánh dấu":"Đánh dấu đã nộp"}</button>`:""}</div>`).join("")}</div></div>`:`<div class="empty">Chưa có ai bị phạt trong khoảng này.</div>`}
+      ${fineList.length?`<div class="card"><div class="list">${fineList.map(l=>`<div class="li"><span class="grow">${esc(l.memberName||nameOf(l.memberId))} <span class="note">· ${esc(l.taskName)} · ${keyLabel(l.freq,l.key)}</span></span><span class="chip ${l.paid?"ok":"bad"}">${l.paid?"Đã nộp":"Chưa nộp"} ${money(l.amount)}</span>${admin?`<button class="btn ghost small" data-paid="${l.id}">${l.paid?"Bỏ đánh dấu":"Đánh dấu đã nộp"}</button>`:""}</div>`).join("")}</div></div>`:`<div class="empty">Chưa có ai bị phạt trong khoảng này.</div>`}
     </section>
   </div>`;
 }
 
 function renderSetup(){
+  if(!admin){view().innerHTML=`<div class="empty" style="display:flex;flex-direction:column;gap:12px;align-items:center"><h2>Cài đặt đã khoá</h2><div>Chỉ người quản lý được thêm, xoá nhân viên, đổi lượt và sửa quy định phạt.</div><button class="btn" data-adminlogin="1">Nhập mật khẩu quản lý</button></div>`;return}
   const ts=sortedTasks(); const dis=canWrite?"":"disabled";
   view().innerHTML=`<div class="section" style="gap:18px">
     <section class="card"><h2>Nhân viên trực (theo thứ tự xoay vòng)</h2>
@@ -476,6 +488,7 @@ function renderSetup(){
         ${[6,0].map(d=>`<label><input type="checkbox" data-off="${d}" ${cfg.offDays.includes(d)?"checked":""} ${dis}> ${d===6?"Thứ bảy":"Chủ nhật"}</label>`).join("")}</div>
       <div class="note">Cách tính: quên lần 1 → nhắc lần 1, việc dời sang hôm sau, vẫn người đó làm. Quên lần ${cfg.reminders} → nhắc lần ${cfg.reminders}. Quên lần ${cfg.reminders+1} → phạt ${money(cfg.fine)} và chuyển lượt cho người tiếp theo. Làm đúng → chuyển ngay người tiếp theo.</div>
     </section>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost small" data-lockadmin="1">Khoá cài đặt trên máy này</button></div>
   </div>`;
 }
 
@@ -484,7 +497,10 @@ document.addEventListener("click",async e=>{
   const b=e.target.closest("button"); if(!b) return;
   if(b.dataset.tab){tab=b.dataset.tab;render();return}
   if(b.dataset.go){tab=b.dataset.go;render();return}
-  if(b.dataset.done||b.dataset.undo||b.dataset.paid||b.dataset.mv||b.dataset.rm||b.dataset.rmt){if(!(await ensureUnlocked()))return}
+  if(b.dataset.adminlogin){if(await ensureUnlocked("admin"))render();return}
+  if(b.dataset.lockadmin){await lockAdmin();return}
+  if(b.dataset.paid||b.dataset.mv||b.dataset.rm||b.dataset.rmt){if(!(await ensureUnlocked("admin")))return}
+  if(b.dataset.done||b.dataset.undo){if(!(await ensureUnlocked()))return}
   if(b.dataset.done){b.disabled=true;await markDone(b.dataset.done);return}
   if(b.dataset.undo){await undoDone(b.dataset.undo);return}
   if(b.dataset.mode){calMode=b.dataset.mode;render();return}
@@ -517,7 +533,7 @@ document.addEventListener("click",async e=>{
 document.addEventListener("change",async e=>{
   const el=e.target;
   if(!(el.dataset.cur||el.id==="cReminders"||el.id==="cFine"||el.dataset.off!==undefined)) return;
-  if(!(await ensureUnlocked())){render();return}
+  if(!(await ensureUnlocked("admin"))){render();return}
   if(el.dataset.cur){const t=tasks[el.dataset.cur];const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:el.value,miss:0});toast("Đã đổi người đang tới lượt.")}catch(err){fail(err)}}
   if(el.id==="cReminders") saveCfg({reminders:Math.max(0,Math.min(10,Number(el.value)||0))});
   if(el.id==="cFine") saveCfg({fine:Math.max(0,Number(el.value)||0)});
@@ -526,7 +542,7 @@ document.addEventListener("change",async e=>{
 document.addEventListener("submit",async e=>{
   e.preventDefault();
   if(e.target.id!=="fMem"&&e.target.id!=="fTask") return;
-  if(!(await ensureUnlocked())) return;
+  if(!(await ensureUnlocked("admin"))) return;
   if(e.target.id==="fMem"){
     const v=document.getElementById("memName").value; const names=v.split(",").map(s=>s.trim()).filter(Boolean);
     if(!names.length) return;
@@ -590,6 +606,8 @@ function makeDb(){
     const cred=await new Promise((res,rej)=>{const off=firebase.auth().onAuthStateChanged(u=>{if(u){off();res(u)}},rej);if(!firebase.auth().currentUser)firebase.auth().signInAnonymously().catch(rej)});
     uid=cred.uid; db=makeDb();
     try{const u=await fs.doc("unlocks/"+uid).get();unlocked=u.exists}catch(_){unlocked=false}
+    try{const a=await fs.doc("admins/"+uid).get();admin=a.exists}catch(_){admin=false}
+    if(admin) unlocked=true;
     document.getElementById("ro").hidden=unlocked;
   }catch(e){console.warn(e);showErr(e);ready={cfg:true,tasks:true,logs:true};render();return}
   const maybeRun=()=>{if(ready.cfg&&ready.tasks&&ready.logs&&lastRunDay!==todayKey()) runCatchUp()};
