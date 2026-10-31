@@ -294,9 +294,23 @@ function lastDone(tid){
   if(!l) return null;
   return nextKey(t.freq,l.key)===t.dueKey&&t.curId===nextMember(l.memberId)?l:null;
 }
-async function saveCfg(patch){
-  cfg={...cfg,...patch}; render();
-  try{await db.doc("config/main").set(cfg)}catch(e){fail(e)}
+let cfgSaved="";
+async function saveCfg(patch,msg){
+  cfg={...cfg,...patch}; cfgSaved="saving"; render();
+  try{
+    await db.doc("config/main").set(cfg);
+    const d=new Date(); cfgSaved=`Đã lưu lúc ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    toast(msg||"Đã lưu cài đặt."); render(); return true;
+  }catch(e){cfgSaved="error";fail(e);render();return false}
+}
+// Khi đổi ngày nghỉ: đưa việc hằng ngày về ngày làm việc gần nhất (nếu hôm đó chưa ai làm)
+async function realignDaily(){
+  const v=validDay(todayKey());
+  for(const t of sortedTasks()){
+    if(t.freq!=="day"||t.dueKey<=v) continue;
+    if(logs.some(l=>l.taskId===t.id&&l.type==="done"&&l.key>=v)) continue;
+    const {id,...tb}=t; try{await db.doc("tasks/"+id).set({...tb,dueKey:v})}catch(e){fail(e)}
+  }
 }
 function fail(e){console.warn(e);if(e?.code==="permission-denied")toast("Việc này cần mật khẩu quản lý hoặc mã PIN đã đổi.");else toast("Chưa lưu được, kiểm tra mạng rồi thử lại.")}
 // ---------- PIN (nhân viên) + mật khẩu quản lý ----------
@@ -578,7 +592,7 @@ function renderSetup(){
         <select id="taskFreq" ${dis}><option value="day">Hằng ngày</option><option value="week">Hằng tuần</option><option value="month">Hằng tháng</option></select>
         <button class="btn small" ${dis}>Thêm việc</button></form>
     </section>
-    <section class="card"><h2>Quy định</h2>
+    <section class="card"><div class="thead"><h2>Quy định</h2>${cfgSaved==="saving"?`<span class="chip muted">Đang lưu...</span>`:cfgSaved==="error"?`<span class="chip bad">Chưa lưu được</span>`:cfgSaved?`<span class="chip ok">${cfgSaved}</span>`:""}</div>
       <div class="row"><label for="cReminders">Số lần nhắc trước khi phạt</label><input type="number" id="cReminders" min="0" max="10" value="${cfg.reminders}" style="width:80px" ${dis}></div>
       <div class="row"><label for="cFine">Tiền phạt mỗi lần (đồng)</label><input type="number" id="cFine" min="0" step="10000" value="${cfg.fine}" style="width:130px" ${dis}></div>
       <div class="row"><span>Ngày nghỉ (không tính việc hằng ngày):</span>
@@ -641,9 +655,13 @@ document.addEventListener("change",async e=>{
   if(!(el.dataset.cur||el.id==="cReminders"||el.id==="cFine"||el.dataset.off!==undefined)) return;
   if(!(await ensureUnlocked("admin"))){render();return}
   if(el.dataset.cur){const t=tasks[el.dataset.cur];const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:el.value,miss:0});toast("Đã đổi người đang tới lượt.")}catch(err){fail(err)}}
-  if(el.id==="cReminders") saveCfg({reminders:Math.max(0,Math.min(10,Number(el.value)||0))});
-  if(el.id==="cFine") saveCfg({fine:Math.max(0,Number(el.value)||0)});
-  if(el.dataset.off!==undefined){const d=Number(el.dataset.off);const s=new Set(cfg.offDays);el.checked?s.add(d):s.delete(d);saveCfg({offDays:[...s]})}
+  if(el.id==="cReminders"){const v=Math.max(0,Math.min(10,Number(el.value)||0));saveCfg({reminders:v},`Đã lưu: nhắc ${v} lần rồi mới phạt.`)}
+  if(el.id==="cFine"){const v=Math.max(0,Number(el.value)||0);saveCfg({fine:v},`Đã lưu: phạt ${money(v)} mỗi lần.`)}
+  if(el.dataset.off!==undefined){
+    const d=Number(el.dataset.off);const st=new Set(cfg.offDays);el.checked?st.add(d):st.delete(d);
+    const name=d===6?"Thứ bảy":"Chủ nhật";
+    if(await saveCfg({offDays:[...st]},`Đã lưu: ${name} ${el.checked?"là ngày nghỉ":"là ngày làm việc"}.`)) await realignDaily();
+  }
 });
 document.addEventListener("submit",async e=>{
   if(e.target.id!=="fNote"&&e.target.id!=="fNoteDone") return;
