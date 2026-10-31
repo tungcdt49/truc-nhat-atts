@@ -37,7 +37,10 @@ h2{font-family:var(--f-display);font-size:17px;margin:0;font-weight:600}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .card.alert{border-color:var(--warn)}
 .card.danger{border-color:var(--bad)}
-.thead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.thead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:8px}
+.thead>div{min-width:0;flex:1 1 120px}
+.whohint{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.who.later{color:var(--muted)}
 .tname{font-weight:700;font-size:16px}
 .freq{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
 .who{font-family:var(--f-display);font-size:28px;font-weight:600;line-height:1.15;word-break:break-word}
@@ -444,23 +447,28 @@ function card(t){
   const ck=curKey(t.freq), has=M().length>0;
   const mem=memberById(t.curId)||M()[0];
   const notYet=t.dueKey>ck;
-  let chip="", cls="card";
+  const prev=logs.filter(l=>l.taskId===t.id&&l.type==="done").sort((a,b)=>b.at-a.at)[0];
+  const doneThis=notYet&&prev&&prev.key===ck;              // tuần/tháng này đã có người làm
+  const offToday=notYet&&!doneThis&&t.freq==="day";          // hôm nay là ngày nghỉ
+  let chip="", cls="card", hint="", btn="Đã làm xong";
   if(!has) chip=`<span class="chip muted">Chưa có người</span>`;
-  else if(notYet) chip=`<span class="chip muted">Ngày nghỉ · lượt kế: ${keyLabel(t.freq,t.dueKey)}</span>`;
+  else if(doneThis){chip=`<span class="chip ok">${t.freq==="day"?"Hôm nay":t.freq==="week"?"Tuần này":"Tháng này"} đã xong</span>`;hint=`Lượt tiếp theo · ${keyLabel(t.freq,t.dueKey)}`;btn="Chờ lượt sau"}
+  else if(offToday){chip=`<span class="chip muted">Hôm nay nghỉ</span>`;hint=`Người làm ngày ${dShort(t.dueKey)}`;btn=`${dShort(t.dueKey)} mới làm`}
+  else if(notYet){chip=`<span class="chip muted">Chưa tới lượt</span>`;hint=`Lượt tiếp theo · ${keyLabel(t.freq,t.dueKey)}`;btn="Chờ lượt sau"}
   else if(t.miss){
-    const left=cfg.reminders-t.miss+1;
     chip=`<span class="chip ${t.miss>=cfg.reminders?"bad":"warn"}">Nhắc lần ${t.miss}/${cfg.reminders}</span>`;
-    cls+=t.miss>=cfg.reminders?" danger":" alert";
-  } else chip=`<span class="chip">${t.freq==="day"?"Hôm nay":t.freq==="week"?"Tuần này":"Tháng này"}</span>`;
+    cls+=t.miss>=cfg.reminders?" danger":" alert"; hint="Đang tới lượt (trễ)";
+  } else {chip=`<span class="chip">${t.freq==="day"?"Hôm nay":t.freq==="week"?"Tuần này":"Tháng này"}</span>`;hint="Đang tới lượt"}
   const queue=has?Array.from({length:Math.min(4,M().length-1)},(_,i)=>memberAt(mem.id,i+1)?.name).filter(Boolean):[];
   const streak=t.miss?missStreak(t):[];
   const undo=lastDone(t.id);
   return `<article class="${cls}">
     <div class="thead"><div><div class="tname">${esc(t.name)}</div><div class="freq">${FREQ[t.freq]}</div></div>${chip}</div>
-    <div class="who">${has?esc(mem.name):"—"}</div>
+    ${has?`<div><div class="whohint">${hint}</div><div class="who ${notYet?"later":""}">${esc(mem.name)}</div></div>`:`<div class="who">—</div>`}
+    ${prev?`<div class="note">Lần gần nhất: <b>${esc(prev.memberName||nameOf(prev.memberId))}</b> đã làm ${keyLabel(t.freq,prev.key)}</div>`:""}
     ${t.miss&&streak.length?`<div class="note">Đã quên: ${streak.map(k=>keyLabel(t.freq,k)).join(", ")}. ${t.miss>=cfg.reminders?`Quên thêm lần nữa sẽ phạt ${money(cfg.fine)}.`:"Việc được dời sang hôm nay."}</div>`:""}
-    ${canWrite&&has?`<button class="btn" data-done="${t.id}" ${notYet?"disabled":""}>Đã làm xong</button>`:""}
-    ${queue.length?`<div class="queue">Tiếp theo: ${queue.map(n=>`<span class="chip muted">${esc(n)}</span>`).join("")}</div>`:""}
+    ${canWrite&&has?`<button class="btn" data-done="${t.id}" ${notYet?"disabled":""}>${btn}</button>`:""}
+    ${queue.length?`<div class="queue">Sau đó: ${queue.map(n=>`<span class="chip muted">${esc(n)}</span>`).join("")}</div>`:""}
     ${undo&&canWrite&&(admin||Date.now()-undo.at<600000)?`<button class="link" data-undo="${t.id}">Bấm nhầm? Hoàn tác lượt của ${esc(undo.memberName)}</button>`:""}
   </article>`;
 }
