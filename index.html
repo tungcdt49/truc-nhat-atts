@@ -93,7 +93,26 @@ input[type=text]{flex:1 1 160px}
 .li .grow{flex:1 1 140px;min-width:0;font-weight:600;word-break:break-word}
 .icon{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:7px;width:32px;height:32px;cursor:pointer;font-size:14px}
 .icon.del{color:var(--bad)}
-.legend{display:flex;flex-wrap:wrap;gap:6px}
+.legend{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bdg{display:inline-flex;align-items:center;gap:3px;border-left:3px solid var(--tc);background:var(--tint);color:var(--fg);border-radius:4px;padding:2px 5px;font-size:11px;font-weight:700;line-height:1.3;white-space:nowrap;margin:1px 0}
+.bdg i{font-style:normal;font-weight:500;color:var(--muted);font-size:10px}
+.bdg.done{background:var(--ok-soft)} .bdg.miss{background:var(--warn-soft)} .bdg.fine{background:var(--bad-soft)}
+.bdg.due{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent)}
+table.staff th,table.staff td{padding:6px 5px;border-bottom:1px solid var(--line);vertical-align:top}
+table.staff .sticky{position:sticky;left:0;z-index:1;background:var(--surface);border-right:1px solid var(--line);min-width:96px;max-width:130px}
+table.staff tr:first-child .sticky{background:var(--tint)}
+table.staff .dcol{text-align:center;min-width:44px}
+table.staff.week .dcol{min-width:78px}
+table.staff th.dcol{font-size:10px;line-height:1.3}
+table.staff th.dcol b{font-size:13px;color:var(--fg)}
+table.staff td.dcol{display:table-cell}
+table.staff .dcol.off{background:var(--tint)}
+table.staff .dcol.now{background:var(--accent-soft)}
+table.staff td.dcol .bdg{display:flex;justify-content:center}
+table.staff .tot{font-size:12px;white-space:nowrap;min-width:72px}
+.okt{color:var(--ok)} .wt{color:var(--warn)} .bt{color:var(--bad)}
+.pname{background:none;border:0;padding:0;font:700 14px var(--f-body);color:var(--fg);cursor:pointer;text-align:left;word-break:break-word}
+.pname[aria-pressed="true"]{color:var(--accent);text-decoration:underline}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--fg);color:#fff;padding:10px 16px;border-radius:9px;font-size:14px;z-index:20;max-width:calc(100% - 32px)}
 .dayview .li .grow small{display:block;font-weight:400;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){.card{transition:border-color .2s}}
@@ -194,7 +213,7 @@ const FREQ = {day:"Hằng ngày", week:"Hằng tuần", month:"Hằng tháng"};
 const WD = ["CN","T2","T3","T4","T5","T6","T7"];
 let db=null, fs=null, uid=null, unlocked=false, admin=false, canWrite=true, ready={cfg:false,tasks:false,logs:false};
 let cfg = {...DEFAULT_CFG}, tasks = {}, logs = [];
-let tab="home", calMode="week", calRef=null, statPeriod="this", lastRunDay=null, busy=false;
+let tab="home", calView="staff", staffFilter="", calMode="week", calRef=null, statPeriod="this", lastRunDay=null, busy=false;
 
 // ---------- dates ----------
 const pad=n=>String(n).padStart(2,"0");
@@ -347,12 +366,12 @@ let tt; function toast(m){const el=document.getElementById("toast");el.textConte
 function assign(t,key){
   const ls=logs.filter(l=>l.taskId===t.id&&l.key===key);
   const pick=ls.find(l=>l.type==="done")||ls.find(l=>l.type==="fine")||ls.find(l=>l.type==="miss");
-  if(key<t.dueKey) return pick?{name:pick.memberName||nameOf(pick.memberId),status:pick.type,log:pick}:null;
+  if(key<t.dueKey) return pick?{id:pick.memberId,name:pick.memberName||nameOf(pick.memberId),status:pick.type,log:pick}:null;
   if(!M().length) return null;
   let k=0,c=t.dueKey,g=0; while(c<key&&g++<500){c=nextKey(t.freq,c);k++}
   if(c!==key) return null;
   const m=memberAt(t.curId,k);
-  return {name:m?.name,status:key===t.dueKey?(t.miss?"late":"due"):"future",miss:t.miss||0};
+  return {id:m?.id,name:m?.name,status:key===t.dueKey?(t.miss?"late":"due"):"future",miss:t.miss||0};
 }
 function missStreak(t){
   return logs.filter(l=>l.taskId===t.id&&l.type==="miss"&&l.memberId===t.curId).sort((a,b)=>b.at-a.at).slice(0,t.miss||0).map(l=>l.key);
@@ -488,6 +507,50 @@ function card(t){
 }
 
 function renderCal(){
+  if(calView==="staff") return renderStaff();
+  renderCalGrid();
+}
+const TCOL=["#c52227","#1f6fb2","#2f8a4c","#a35c00","#6b3fa0","#0f7c80","#b0306f","#5a6470"];
+function abbr(n){const w=n.split(/\s+/).filter(x=>x&&!["và","các","cho","the"].includes(x.toLowerCase()));return (w.length>1?w.slice(0,3).map(x=>x[0]).join(""):n.slice(0,3)).toUpperCase()}
+function renderStaff(){
+  if(!calRef) calRef=todayKey();
+  if(calMode==="day") calMode="week";
+  const ts=sortedTasks(); const today=todayKey();
+  const color={}; ts.forEach((t,i)=>color[t.id]=TCOL[i%TCOL.length]);
+  let days=[], title="";
+  if(calMode==="week"){const mon=monday(calRef);for(let i=0;i<7;i++)days.push(addDays(mon,i));
+    title=`${pad(parse(days[0]).getDate())}/${pad(parse(days[0]).getMonth()+1)} – ${pad(parse(days[6]).getDate())}/${pad(parse(days[6]).getMonth()+1)}`;}
+  else{const ym=calRef.slice(0,7);let d=ym+"-01";while(d.slice(0,7)===ym){days.push(d);d=addDays(d,1)}const[y,m]=ym.split("-").map(Number);title=`Tháng ${m}/${y}`}
+  // gom lịch: grid[memberId][dayKey] = [{t,a,kind}]
+  const grid={}, extra={}; const put=(id,dk,o)=>{if(!id)return;((grid[id]??={})[dk]??=[]).push(o);(extra[id]??={name:o.a.name})};
+  for(const t of ts){
+    if(t.freq==="day") days.forEach(dk=>{if(isOff(dk))return;const a=assign(t,dk);if(a)put(a.id,dk,{t,a})});
+    if(t.freq==="week"){const seen=new Set();days.forEach(dk=>{const wk=monday(dk);if(seen.has(wk))return;seen.add(wk);const a=assign(t,wk);if(a)put(a.id,days.includes(wk)?wk:days[0],{t,a,kind:"tuần"})})}
+    if(t.freq==="month"){const seen=new Set();days.forEach(dk=>{const mk=dk.slice(0,7);if(seen.has(mk))return;seen.add(mk);const a=assign(t,mk);if(a)put(a.id,days.find(d=>d.slice(0,7)===mk),{t,a,kind:"tháng"})})}
+  }
+  const ids=[...M().map(m=>m.id),...Object.keys(extra).filter(id=>!memberById(id))];
+  const rows=ids.filter(id=>!staffFilter||id===staffFilter);
+  const badge=o=>{const st=o.a.status;const cls=st==="done"?"done":st==="fine"?"fine":st==="miss"||st==="late"?"miss":st==="due"?"due":"";
+    const mark=st==="done"?"✓ ":st==="fine"?"₫ ":st==="miss"||st==="late"?"! ":"";
+    return `<span class="bdg ${cls}" style="--tc:${color[o.t.id]}" title="${esc(o.t.name)}${o.kind?" (cả "+o.kind+")":""}">${mark}${esc(abbr(o.t.name))}${o.kind?`<i>${o.kind}</i>`:""}</span>`};
+  const sum=id=>{const all=Object.values(grid[id]||{}).flat();const c=k=>all.filter(o=>o.a.status===k).length;
+    return {n:all.length,done:c("done"),miss:c("miss")+c("late"),fine:c("fine")}};
+  const head=`<tr><th class="sticky">Nhân viên</th>${days.map(dk=>`<th class="dcol ${isOff(dk)?"off":""} ${dk===today?"now":""}">${WD[parse(dk).getDay()]}<br><b>${parse(dk).getDate()}</b></th>`).join("")}<th class="num">Tổng</th></tr>`;
+  const body=rows.map(id=>{const sm=sum(id);return `<tr><th class="sticky"><button class="pname" data-staff="${id}" aria-pressed="${staffFilter===id}">${esc(nameOf(id,extra[id]?.name))}</button></th>${days.map(dk=>`<td class="dcol ${isOff(dk)?"off":""} ${dk===today?"now":""}">${(grid[id]?.[dk]||[]).map(badge).join("")}</td>`).join("")}<td class="num tot"><b>${sm.n}</b> lượt${sm.done?`<br><span class="okt">${sm.done} đã làm</span>`:""}${sm.miss?`<br><span class="wt">${sm.miss} quên</span>`:""}${sm.fine?`<br><span class="bt">${sm.fine} phạt</span>`:""}</td></tr>`}).join("");
+  view().innerHTML=`<div class="section">
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Cách xem">${[["staff","Theo nhân viên"],["cal","Dạng lịch"]].map(([k,l])=>`<button data-calview="${k}" aria-pressed="${calView===k}">${l}</button>`).join("")}</div>
+      <div class="seg" role="group" aria-label="Khoảng thời gian">${[["week","Tuần"],["month","Tháng"]].map(([k,l])=>`<button data-mode="${k}" aria-pressed="${calMode===k}">${l}</button>`).join("")}</div>
+      <div class="pager"><button class="icon" data-nav="-1" aria-label="Trước">‹</button><b>${title}</b><button class="icon" data-nav="1" aria-label="Sau">›</button><button class="btn ghost small" data-nav="0">Hôm nay</button></div>
+    </div>
+    ${!M().length?noMembersBox():`<div class="row"><label for="staffSel" class="note">Xem riêng</label><select id="staffSel"><option value="">Tất cả nhân viên</option>${M().map(m=>`<option value="${m.id}" ${m.id===staffFilter?"selected":""}>${esc(m.name)}</option>`).join("")}</select></div>
+    <div class="scroll"><table class="staff ${calMode}">${head}${body}</table></div>`}
+    <div class="legend">${ts.map(t=>`<span class="bdg" style="--tc:${color[t.id]}">${esc(abbr(t.name))}</span><span class="note" style="margin-right:8px">${esc(t.name)} · ${FREQ[t.freq].toLowerCase()}</span>`).join("")}</div>
+    <div class="legend"><span class="bdg done" style="--tc:var(--ok)">✓ Đã làm</span><span class="bdg miss" style="--tc:var(--warn)">! Quên / trễ</span><span class="bdg fine" style="--tc:var(--bad)">₫ Bị phạt</span><span class="bdg due" style="--tc:var(--accent)">Đến lượt</span><span class="bdg" style="--tc:var(--muted)">Dự kiến</span></div>
+    <div class="note">Lịch tương lai là dự kiến theo vòng xoay, giả định mọi người làm đúng hạn. Bấm vào tên để xem riêng một người.</div>
+  </div>`;
+}
+function renderCalGrid(){
   if(!calRef) calRef=todayKey();
   const ts=sortedTasks();
   let title="", body="";
@@ -532,6 +595,7 @@ function renderCal(){
   }
   view().innerHTML=`<div class="section">
     <div class="toolbar">
+      <div class="seg" role="group" aria-label="Cách xem">${[["staff","Theo nhân viên"],["cal","Dạng lịch"]].map(([k,l])=>`<button data-calview="${k}" aria-pressed="${calView===k}">${l}</button>`).join("")}</div>
       <div class="seg" role="group" aria-label="Kiểu lịch">${[["day","Ngày"],["week","Tuần"],["month","Tháng"]].map(([k,l])=>`<button data-mode="${k}" aria-pressed="${calMode===k}">${l}</button>`).join("")}</div>
       <div class="pager"><button class="icon" data-nav="-1" aria-label="Trước">‹</button><b>${title}</b><button class="icon" data-nav="1" aria-label="Sau">›</button><button class="btn ghost small" data-nav="0">Hôm nay</button></div>
     </div>
@@ -623,6 +687,8 @@ document.addEventListener("click",async e=>{
   if(b.dataset.done||b.dataset.undo){if(!(await ensureUnlocked()))return}
   if(b.dataset.done){b.disabled=true;await markDone(b.dataset.done);return}
   if(b.dataset.undo){await undoDone(b.dataset.undo);return}
+  if(b.dataset.calview){calView=b.dataset.calview;render();return}
+  if(b.dataset.staff){staffFilter=staffFilter===b.dataset.staff?"":b.dataset.staff;render();return}
   if(b.dataset.mode){calMode=b.dataset.mode;render();return}
   if(b.dataset.nav!==undefined){
     const n=Number(b.dataset.nav); if(!calRef) calRef=todayKey();
@@ -652,6 +718,7 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("change",async e=>{
   const el=e.target;
+  if(el.id==="staffSel"){staffFilter=el.value;render();return}
   if(!(el.dataset.cur||el.id==="cReminders"||el.id==="cFine"||el.dataset.off!==undefined)) return;
   if(!(await ensureUnlocked("admin"))){render();return}
   if(el.dataset.cur){const t=tasks[el.dataset.cur];const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:el.value,miss:0});toast("Đã đổi người đang tới lượt.")}catch(err){fail(err)}}
