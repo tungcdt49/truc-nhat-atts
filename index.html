@@ -312,7 +312,6 @@ function assign(t,key){
 function missStreak(t){
   return logs.filter(l=>l.taskId===t.id&&l.type==="miss"&&l.memberId===t.curId).sort((a,b)=>b.at-a.at).slice(0,t.miss||0).map(l=>l.key);
 }
-
 // ---------- render ----------
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const view=()=>document.getElementById("view");
