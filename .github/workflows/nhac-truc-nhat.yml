@@ -1,0 +1,28 @@
+name: Nhắc trực nhật qua Teams
+
+on:
+  schedule:
+    - cron: "30 1 * * *"   # 8:30 sáng giờ VN
+    - cron: "30 9 * * *"   # 16:30 chiều giờ VN: nhắc lại việc chưa làm
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "sang = lịch đầy đủ, chieu = chỉ việc chưa làm"
+        required: false
+        default: "sang"
+
+jobs:
+  nhac:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Gửi nhắc
+        run: node scripts/nhac-teams.mjs
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          APP_URL: ${{ vars.APP_URL }}
+          MODE: ${{ inputs.mode }}
