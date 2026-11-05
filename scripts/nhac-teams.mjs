@@ -172,7 +172,10 @@ function buildCard({ cfg, tasks, notes, today, mode, appUrl }) {
     body.push({ type: "TextBlock", wrap: true, spacing: "None", text: Object.entries(owe).map(([k, v]) => `${k}: ${money(v)}`).join(" · ") });
   }
   const card = { type: "AdaptiveCard", $schema: "http://adaptivecards.io/schemas/adaptive-card.json", version: "1.4", body };
-  if (appUrl) card.actions = [{ type: "Action.OpenUrl", title: "Mở app trực nhật", url: appUrl }];
+  if (appUrl) {
+    body.push({ type: "TextBlock", wrap: true, spacing: "Medium", text: `[Mở app trực nhật](${appUrl})` });
+    card.actions = [{ type: "Action.OpenUrl", title: "Mở app trực nhật", url: appUrl }];
+  }
   return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", contentUrl: null, content: card }] };
 }
 
