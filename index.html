@@ -430,7 +430,81 @@ function openDone(id){
   document.getElementById("doneModal").hidden=false;
 }
 document.getElementById("ndCancel").addEventListener("click",()=>{document.getElementById("doneModal").hidden=true;doneTarget=null});
-const KEEP=["memName","taskName","taskFreq","noteTitle","noteText","noteBy"];
+const KEEP=["memName","taskName","taskFreq","noteTitle","noteText","noteBy","wipeConfirm","restoreConfirm"];
+// ---------- dọn dữ liệu demo ----------
+let wipeOpts={logs:true,notes:true,reset:true,start:""}, wiping=false;
+let restoreData=null, restoreName="", restoreMode="replace", restoring=false, restoreErr="";
+function checkBackup(j){
+  if(!j||typeof j!=="object"||!Array.isArray(j.logs)||!Array.isArray(j.notes)||!Array.isArray(j.tasks)||!j.config||typeof j.config!=="object")
+    throw new Error("File này không phải bản sao lưu của app Trực nhật ATTS.");
+  const okId=x=>x&&typeof x==="object"&&typeof x.id==="string"&&/^[A-Za-z0-9_\-.:]{1,150}$/.test(x.id);
+  if(![...j.logs,...j.notes,...j.tasks].every(okId)) throw new Error("File sao lưu bị lỗi: có dòng dữ liệu không hợp lệ.");
+  if(!Array.isArray(j.config.members)) throw new Error("File sao lưu thiếu danh sách nhân viên.");
+  return j;
+}
+async function readBackup(file){
+  restoreErr=""; restoreData=null; restoreName=file?.name||"";
+  try{ if(file.size>15e6) throw new Error("File quá lớn."); restoreData=checkBackup(JSON.parse(await file.text())) }
+  catch(e){ restoreErr=e instanceof SyntaxError?"Không đọc được file. Hãy chọn đúng file .json đã tải từ app.":(e.message||String(e)) }
+  render();
+}
+async function restore(){
+  if(restoring||!restoreData) return; restoring=true; render();
+  const d=restoreData, mode=restoreMode, strip=({id,...r})=>r, ops=[];
+  try{
+    const [lg,nt]=await Promise.all([allDocs("logs"),allDocs("notes")]);
+    if(mode==="replace"){
+      const kL=new Set(d.logs.map(x=>x.id)), kN=new Set(d.notes.map(x=>x.id)), kT=new Set(d.tasks.map(x=>x.id));
+      lg.filter(x=>!kL.has(x.id)).forEach(x=>ops.push(b=>b.delete(x.ref)));
+      nt.filter(x=>!kN.has(x.id)).forEach(x=>ops.push(b=>b.delete(x.ref)));
+      sortedTasks().filter(t=>!kT.has(t.id)).forEach(t=>ops.push(b=>b.delete(fs.doc("tasks/"+t.id))));
+      ops.push(b=>b.set(fs.doc("config/main"),d.config));
+      d.tasks.forEach(t=>ops.push(b=>b.set(fs.doc("tasks/"+t.id),strip(t))));
+      d.logs.forEach(x=>ops.push(b=>b.set(fs.doc("logs/"+x.id),strip(x))));
+      d.notes.forEach(x=>ops.push(b=>b.set(fs.doc("notes/"+x.id),strip(x))));
+    }else{
+      const hL=new Set(lg.map(x=>x.id)), hN=new Set(nt.map(x=>x.id));
+      d.logs.filter(x=>!hL.has(x.id)).forEach(x=>ops.push(b=>b.set(fs.doc("logs/"+x.id),strip(x))));
+      d.notes.filter(x=>!hN.has(x.id)).forEach(x=>ops.push(b=>b.set(fs.doc("notes/"+x.id),strip(x))));
+    }
+    for(let i=0;i<ops.length;i+=400){const b=fs.batch();ops.slice(i,i+400).forEach(f=>f(b));await b.commit()}
+    lastRunDay=null;
+    toast(mode==="replace"?`Đã khôi phục toàn bộ: ${d.logs.length} ghi nhận, ${d.notes.length} việc phát sinh.`:`Đã thêm ${ops.length} dòng còn thiếu từ bản sao lưu.`);
+    restoreData=null; restoreName="";
+    const c=document.getElementById("restoreConfirm"); if(c) c.value="";
+  }catch(e){ if(e?.code==="permission-denied") toast("Bị từ chối. Kiểm tra đã cập nhật luật Firebase mới chưa."); else fail(e) }
+  finally{ restoring=false; render() }
+}
+async function allDocs(col){const out=[];let last=null;for(;;){let q=fs.collection(col).orderBy(firebase.firestore.FieldPath.documentId()).limit(400);if(last)q=q.startAfter(last);const sn=await q.get();if(sn.empty)break;sn.docs.forEach(d=>out.push(d));last=sn.docs[sn.docs.length-1];if(sn.size<400)break}return out}
+async function backup(){
+  try{
+    toast("Đang chuẩn bị bản sao lưu...");
+    const [lg,nt]=await Promise.all([allDocs("logs"),allDocs("notes")]);
+    const data={app:"Trực nhật ATTS",exportedAt:new Date().toISOString(),config:cfg,tasks:sortedTasks(),logs:lg.map(d=>({id:d.id,...d.data()})),notes:nt.map(d=>({id:d.id,...d.data()}))};
+    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));
+    a.download=`truc-nhat-atts-saoluu-${todayKey()}.json`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);
+    toast(`Đã tải bản sao lưu: ${data.logs.length} ghi nhận, ${data.notes.length} việc phát sinh.`);
+  }catch(e){fail(e)}
+}
+async function wipe(){
+  if(wiping) return; wiping=true; render();
+  const o={...wipeOpts}; let nl=0,nn=0;
+  try{
+    const del=async col=>{const ds=await allDocs(col);for(let i=0;i<ds.length;i+=400){const b=fs.batch();ds.slice(i,i+400).forEach(d=>b.delete(d.ref));await b.commit()}return ds.length};
+    if(o.logs) nl=await del("logs");
+    if(o.notes) nn=await del("notes");
+    if(o.reset&&sortedTasks().length){
+      const start=memberById(o.start)?o.start:(M()[0]?.id||null);
+      const b=fs.batch();
+      sortedTasks().forEach(t=>b.update(fs.doc("tasks/"+t.id),{curId:start,miss:0,dueKey:t.freq==="day"?validDay(curKey("day")):curKey(t.freq)}));
+      await b.commit();
+    }
+    lastRunDay=todayKey();
+    document.getElementById("wipeConfirm")&&(document.getElementById("wipeConfirm").value="");
+    toast(`Đã dọn xong: xoá ${nl} ghi nhận, ${nn} việc phát sinh${o.reset?", đặt lại lượt":""}.`);
+  }catch(e){fail(e)}
+  finally{wiping=false;render()}
+}
 function render(){
   const keep={}, ae=document.activeElement?.id;
   KEEP.forEach(id=>{const el=document.getElementById(id);if(el)keep[id]=el.value});
@@ -663,6 +737,31 @@ function renderSetup(){
         ${[6,0].map(d=>`<label><input type="checkbox" data-off="${d}" ${cfg.offDays.includes(d)?"checked":""} ${dis}> ${d===6?"Thứ bảy":"Chủ nhật"}</label>`).join("")}</div>
       <div class="note">Cách tính: quên lần 1 → nhắc lần 1, việc dời sang hôm sau, vẫn người đó làm. Quên lần ${cfg.reminders} → nhắc lần ${cfg.reminders}. Quên lần ${cfg.reminders+1} → phạt ${money(cfg.fine)} và chuyển lượt cho người tiếp theo. Làm đúng → chuyển ngay người tiếp theo.</div>
     </section>
+    <section class="card danger"><h2>Bắt đầu chạy chính thức</h2>
+      <div class="note">Xoá dữ liệu chạy thử. Danh sách nhân viên, công việc và quy định được giữ nguyên.</div>
+      <label class="row"><input type="checkbox" id="wLogs" ${wipeOpts.logs?"checked":""}> Xoá lịch sử đã làm, quên, phạt (cả tiền phạt)</label>
+      <label class="row"><input type="checkbox" id="wNotes" ${wipeOpts.notes?"checked":""}> Xoá việc phát sinh và tiền ứng chờ hoàn</label>
+      <label class="row"><input type="checkbox" id="wReset" ${wipeOpts.reset?"checked":""}> Đặt lại lượt: xoá số lần nhắc, bắt đầu từ hôm nay</label>
+      ${wipeOpts.reset?`<div class="row"><label for="wStart" class="note">Người trực đầu tiên</label><select id="wStart">${M().map(m=>`<option value="${m.id}" ${m.id===(wipeOpts.start||M()[0]?.id)?"selected":""}>${esc(m.name)}</option>`).join("")}</select></div>`:""}
+      <div class="row"><button class="btn ghost small" data-backup="1">Tải bản sao lưu trước</button></div>
+      <div class="row"><input type="text" id="wipeConfirm" placeholder='Gõ XOA để xác nhận' autocomplete="off" style="max-width:200px">
+        <button class="btn small" data-wipe="1" ${wiping?"disabled":""}>${wiping?"Đang xoá...":"Xoá dữ liệu chạy thử"}</button></div>
+      <div class="note">Đã xoá thì không khôi phục được. Nên bấm "Tải bản sao lưu trước" để giữ một bản trên máy.</div>
+    </section>
+    <section class="card"><h2>Khôi phục từ file sao lưu</h2>
+      <div class="note">Chọn file .json đã tải bằng nút "Tải bản sao lưu".</div>
+      <input type="file" id="restoreFile" accept=".json,application/json">
+      ${restoreErr?`<div class="err">${esc(restoreErr)}</div>`:""}
+      ${restoreData?`<div class="banner" style="background:var(--tint);border-color:var(--line)"><b>${esc(restoreName)}</b><br>
+        Sao lưu lúc ${restoreData.exportedAt?dt(Date.parse(restoreData.exportedAt))+"/"+new Date(restoreData.exportedAt).getFullYear():"không rõ"} ·
+        ${restoreData.config.members.length} nhân viên · ${restoreData.tasks.length} công việc · ${restoreData.logs.length} ghi nhận · ${restoreData.notes.length} việc phát sinh</div>
+      <label class="row"><input type="radio" name="rmode" id="rReplace" ${restoreMode==="replace"?"checked":""}> <span><b>Khôi phục toàn bộ</b>: đưa app về đúng như lúc sao lưu (nhân viên, công việc, lượt, lịch sử, việc phát sinh). Dữ liệu phát sinh sau thời điểm đó sẽ bị xoá.</span></label>
+      <label class="row"><input type="radio" name="rmode" id="rMerge" ${restoreMode==="merge"?"checked":""}> <span><b>Chỉ thêm phần bị thiếu</b>: thêm lại lịch sử và việc phát sinh đã bị xoá, giữ nguyên mọi thứ hiện tại.</span></label>
+      <div class="row"><input type="text" id="restoreConfirm" placeholder="Gõ NHAP để xác nhận" autocomplete="off" style="max-width:200px">
+        <button class="btn small" data-restore="1" ${restoring?"disabled":""}>${restoring?"Đang khôi phục...":"Khôi phục"}</button>
+        <button class="btn ghost small" data-restorecancel="1">Bỏ chọn file</button></div>
+      <div class="note">Nên bấm "Tải bản sao lưu trước" ở mục trên để giữ lại dữ liệu hiện tại trước khi khôi phục toàn bộ.</div>`:""}
+    </section>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost small" data-lockadmin="1">Khoá cài đặt trên máy này</button></div>
   </div>`;
 }
@@ -683,6 +782,19 @@ document.addEventListener("click",async e=>{
   if(b.dataset.go){tab=b.dataset.go;render();return}
   if(b.dataset.adminlogin){if(await ensureUnlocked("admin"))render();return}
   if(b.dataset.lockadmin){await lockAdmin();return}
+  if(b.dataset.restorecancel){restoreData=null;restoreName="";restoreErr="";render();return}
+  if(b.dataset.restore){
+    const c=document.getElementById("restoreConfirm");
+    if((c?.value||"").trim().toUpperCase()!=="NHAP"){toast("Gõ chữ NHAP vào ô bên cạnh để xác nhận.");c?.focus();return}
+    if(!(await ensureUnlocked("admin")))return;await restore();return;
+  }
+  if(b.dataset.backup){if(!(await ensureUnlocked("admin")))return;await backup();return}
+  if(b.dataset.wipe){
+    const c=document.getElementById("wipeConfirm");
+    if((c?.value||"").trim().toUpperCase()!=="XOA"){toast('Gõ chữ XOA vào ô bên cạnh để xác nhận.');c?.focus();return}
+    if(!wipeOpts.logs&&!wipeOpts.notes&&!wipeOpts.reset){toast("Chưa chọn mục nào để xoá.");return}
+    if(!(await ensureUnlocked("admin")))return;await wipe();return;
+  }
   if(b.dataset.paid||b.dataset.mv||b.dataset.rm||b.dataset.rmt){if(!(await ensureUnlocked("admin")))return}
   if(b.dataset.done||b.dataset.undo){if(!(await ensureUnlocked()))return}
   if(b.dataset.done){b.disabled=true;await markDone(b.dataset.done);return}
@@ -719,6 +831,13 @@ document.addEventListener("click",async e=>{
 document.addEventListener("change",async e=>{
   const el=e.target;
   if(el.id==="staffSel"){staffFilter=el.value;render();return}
+  if(el.id==="wLogs"){wipeOpts.logs=el.checked;return}
+  if(el.id==="restoreFile"){if(el.files?.[0])await readBackup(el.files[0]);return}
+  if(el.id==="rReplace"){restoreMode="replace";return}
+  if(el.id==="rMerge"){restoreMode="merge";return}
+  if(el.id==="wNotes"){wipeOpts.notes=el.checked;return}
+  if(el.id==="wReset"){wipeOpts.reset=el.checked;render();return}
+  if(el.id==="wStart"){wipeOpts.start=el.value;return}
   if(!(el.dataset.cur||el.id==="cReminders"||el.id==="cFine"||el.dataset.off!==undefined)) return;
   if(!(await ensureUnlocked("admin"))){render();return}
   if(el.dataset.cur){const t=tasks[el.dataset.cur];const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:el.value,miss:0});toast("Đã đổi người đang tới lượt.")}catch(err){fail(err)}}
