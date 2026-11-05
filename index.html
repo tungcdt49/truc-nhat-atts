@@ -110,6 +110,8 @@ table.staff .dcol.off{background:var(--tint)}
 table.staff .dcol.now{background:var(--accent-soft)}
 table.staff td.dcol .bdg{display:flex;justify-content:center}
 table.staff .tot{font-size:12px;white-space:nowrap;min-width:72px}
+table.staff .dcol.absent{background:repeating-linear-gradient(135deg,var(--warn-soft) 0 6px,var(--surface) 6px 12px)}
+.abs{display:block;font-size:10px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:.04em}
 .okt{color:var(--ok)} .wt{color:var(--warn)} .bt{color:var(--bad)}
 .pname{background:none;border:0;padding:0;font:700 14px var(--f-body);color:var(--fg);cursor:pointer;text-align:left;word-break:break-word}
 .pname[aria-pressed="true"]{color:var(--accent);text-decoration:underline}
@@ -167,6 +169,18 @@ img{max-width:100%}
   <main id="view"></main>
 </div>
 <div id="toast" class="toast" hidden></div>
+<div id="skipModal" class="modal" hidden>
+  <form id="fSkip" class="sheet">
+    <h2>Bỏ qua lượt</h2>
+    <div class="note" id="skTitle"></div>
+    <label for="skReason">Lý do</label>
+    <select id="skReason"><option value="om">Ốm</option><option value="ct">Công tác</option><option value="phep">Nghỉ phép</option><option value="khac">Vắng</option></select>
+    <label for="skNote">Ghi chú</label>
+    <input id="skNote" type="text" maxlength="200" placeholder="Không bắt buộc">
+    <div id="skErr" class="err"></div>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost small" id="skCancel">Huỷ</button><button class="btn small">Bỏ qua lượt</button></div>
+  </form>
+</div>
 <div id="doneModal" class="modal" hidden>
   <form id="fNoteDone" class="sheet">
     <h2>Xác nhận đã xử lý</h2>
@@ -246,6 +260,21 @@ const nameOf=(id,fallback)=>memberById(id)?.name||fallback||"(đã xoá)";
 function idxOf(id){const i=M().findIndex(m=>m.id===id);return i<0?0:i}
 function nextMember(id){const n=M().length;if(!n)return null;return M()[(idxOf(id)+1)%n].id}
 function memberAt(id,k){const n=M().length;if(!n)return null;return M()[(idxOf(id)+k)%n]}
+// ---------- nghỉ ốm / công tác ----------
+const ABS_R={om:"Ốm",ct:"Công tác",phep:"Nghỉ phép",khac:"Vắng"};
+const absOn=(mid,dk)=>(cfg.absences||[]).find(a=>a.memberId===mid&&a.from<=dk&&dk<=a.to);
+function periodDays(freq,key){
+  if(freq==="day") return [key];
+  const out=[]; let d=freq==="week"?key:key+"-01", g=0;
+  while(g++<31&&(freq==="week"?d<=addDays(key,6):d.slice(0,7)===key)){if(!isOff(d))out.push(d);d=addDays(d,1)}
+  const td=todayKey(), rest=out.filter(d=>d>=td);   // kỳ đang chạy: chỉ xét những ngày còn lại
+  return rest.length?rest:out;
+}
+// Vắng cả kỳ (ngày / mọi ngày làm việc trong tuần / tháng) thì bỏ qua
+function absentFor(mid,freq,key){const ds=periodDays(freq,key);return ds.length>0&&ds.every(d=>absOn(mid,d))}
+function pickAt(startId,freq,key){const n=M().length;if(!n)return null;const i=idxOf(startId);for(let k=0;k<n;k++){const m=M()[(i+k)%n];if(!absentFor(m.id,freq,key))return m}return M()[i%n]}
+const effOf=t=>pickAt(t.curId,t.freq,t.dueKey)||M()[0];
+function seq(t,count){const out=[];let cur=t.curId,key=t.dueKey;for(let i=0;i<count&&M().length;i++){const m=pickAt(cur,t.freq,key);out.push({key,m});cur=nextMember(m.id);key=nextKey(t.freq,key)}return out}
 const sortedTasks=()=>Object.values(tasks).sort((a,b)=>(a.order||0)-(b.order||0)||a.name.localeCompare(b.name));
 
 // ---------- catch-up: missed periods -> reminder -> fine ----------
@@ -253,7 +282,7 @@ function catchUp(t){
   const n={...t}; const out=[]; const ck=curKey(n.freq); let g=0;
   if(n.freq==="day"){const v=validDay(n.dueKey); if(v!==n.dueKey) n.dueKey=v;}
   while(n.dueKey<ck && g++<90){
-    const mem=memberById(n.curId)||M()[0];
+    const mem=pickAt(n.curId,n.freq,n.dueKey)||M()[0];
     if(mem){
       n.curId=mem.id; n.miss=(n.miss||0)+1;
       const base={taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:n.dueKey,at:Date.now()};
@@ -290,7 +319,7 @@ async function runCatchUp(){
 async function markDone(tid){
   const t=tasks[tid]; if(!t||!M().length) return;
   if(t.dueKey>curKey(t.freq)) return;
-  const mem=memberById(t.curId)||M()[0];
+  const mem=effOf(t);
   try{
     await db.doc(`logs/done_${t.id}_${t.dueKey}`).set({taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"done",prevMiss:t.miss||0,at:Date.now()});
     const {id,...tb}=t;
@@ -332,6 +361,31 @@ async function realignDaily(){
   }
 }
 function fail(e){console.warn(e);if(e?.code==="permission-denied")toast("Việc này cần mật khẩu quản lý hoặc mã PIN đã đổi.");else toast("Chưa lưu được, kiểm tra mạng rồi thử lại.")}
+let skipTarget=null;
+document.getElementById("skCancel").addEventListener("click",()=>{document.getElementById("skipModal").hidden=true;skipTarget=null});
+async function submitAdminForm(id){
+  if(!(await ensureUnlocked("admin"))) return;
+  if(id==="fAbs"){
+    const who=document.getElementById("absWho").value, from=document.getElementById("absFrom").value, to=document.getElementById("absTo").value, reason=document.getElementById("absReason").value;
+    if(!who){toast("Chọn nhân viên nghỉ.");return}
+    if(!from||!to||to<from){toast("Ngày kết thúc phải sau hoặc bằng ngày bắt đầu.");return}
+    const list=(cfg.absences||[]).filter(a=>a.to>=addDays(todayKey(),-60));   // tự dọn lịch nghỉ cũ hơn 60 ngày
+    list.push({id:"a"+Date.now().toString(36),memberId:who,memberName:nameOf(who),from,to,reason});
+    document.getElementById("absWho").value="";
+    await saveCfg({absences:list},`Đã thêm: ${nameOf(who)} ${ABS_R[reason].toLowerCase()} ${dShort(from)}${to!==from?" → "+dShort(to):""}.`);
+  }
+  if(id==="fSkip"){
+    const t=tasks[skipTarget]; if(!t) return; const mem=effOf(t);
+    const reason=document.getElementById("skReason").value, note=document.getElementById("skNote").value.trim();
+    try{
+      await db.doc(`logs/skip_${t.id}_${t.dueKey}_${mem.id}`).set({taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"skip",reason,note,at:Date.now()});
+      const {id:_,...tb}=t;
+      await db.doc("tasks/"+t.id).set({...tb,curId:nextMember(mem.id),miss:0});
+      document.getElementById("skipModal").hidden=true; skipTarget=null;
+      toast(`Đã bỏ qua lượt của ${mem.name}. Người làm: ${effOf({...t,curId:nextMember(mem.id),miss:0})?.name}.`);
+    }catch(e){document.getElementById("skErr").textContent="Chưa lưu được. Kiểm tra mạng hoặc mật khẩu quản lý."}
+  }
+}
 // ---------- PIN (nhân viên) + mật khẩu quản lý ----------
 let pinResolve=null, pinLevel="staff";
 function ensureUnlocked(level="staff"){
@@ -368,9 +422,9 @@ function assign(t,key){
   const pick=ls.find(l=>l.type==="done")||ls.find(l=>l.type==="fine")||ls.find(l=>l.type==="miss");
   if(key<t.dueKey) return pick?{id:pick.memberId,name:pick.memberName||nameOf(pick.memberId),status:pick.type,log:pick}:null;
   if(!M().length) return null;
-  let k=0,c=t.dueKey,g=0; while(c<key&&g++<500){c=nextKey(t.freq,c);k++}
+  let c=t.dueKey,cur=t.curId,g=0,m=null;
+  while(g++<500){m=pickAt(cur,t.freq,c);if(c>=key)break;cur=nextMember(m.id);c=nextKey(t.freq,c)}
   if(c!==key) return null;
-  const m=memberAt(t.curId,k);
   return {id:m?.id,name:m?.name,status:key===t.dueKey?(t.miss?"late":"due"):"future",miss:t.miss||0};
 }
 function missStreak(t){
@@ -430,7 +484,7 @@ function openDone(id){
   document.getElementById("doneModal").hidden=false;
 }
 document.getElementById("ndCancel").addEventListener("click",()=>{document.getElementById("doneModal").hidden=true;doneTarget=null});
-const KEEP=["memName","taskName","taskFreq","noteTitle","noteText","noteBy","wipeConfirm","restoreConfirm"];
+const KEEP=["absWho","absReason","absFrom","absTo","memName","taskName","taskFreq","noteTitle","noteText","noteBy","wipeConfirm","restoreConfirm"];
 // ---------- dọn dữ liệu demo ----------
 let wipeOpts={logs:true,notes:true,reset:true,start:""}, wiping=false;
 let restoreData=null, restoreName="", restoreMode="replace", restoring=false, restoreErr="";
@@ -528,6 +582,8 @@ function renderHome(){
   const late=ts.filter(t=>t.miss>0&&M().length);
   let h="";
   if(!M().length) h+=noMembersBox();
+  {const td=todayKey(), away=(cfg.absences||[]).filter(a=>a.from<=td&&td<=a.to&&memberById(a.memberId));
+   if(away.length) h+=`<div class="note"><b>Đang nghỉ:</b> ${away.map(a=>`${esc(nameOf(a.memberId))} (${ABS_R[a.reason].toLowerCase()}, đến ${dShort(a.to)})`).join("; ")}. Lượt của người nghỉ tự chuyển cho người kế tiếp.</div>`;}
   {const op=notes.filter(n=>!n.done), pay=notes.filter(n=>noteStatus(n)==="pay");
    if(op.length||pay.length) h+=`<div class="card" style="flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between"><div><b>Việc phát sinh:</b> ${op.length} việc đang chờ${op.length?` (${op.slice(0,3).map(n=>esc(n.title)).join(", ")}${op.length>3?"...":""})`:""}${pay.length?` · ${money(pay.reduce((a,n)=>a+(n.amount||0),0))} chờ hoàn tiền`:""}</div><button class="btn ghost small" data-tab="notes">Xem</button></div>`;}
   if(late.length){
@@ -540,11 +596,12 @@ function renderHome(){
   }
   const recent=[...logs].sort((a,b)=>b.at-a.at).slice(0,8);
   if(recent.length){
-    h+=`<section class="section"><h2>Ghi nhận gần đây</h2><div class="card"><div class="list">`+recent.map(l=>`<div class="li"><span class="grow">${esc(l.memberName||nameOf(l.memberId))} <span class="note">· ${esc(l.taskName)} · ${keyLabel(l.freq,l.key)}</span></span>${statusChip(l.type,l.n,l.amount)}</div>`).join("")+`</div></div></section>`;
+    h+=`<section class="section"><h2>Ghi nhận gần đây</h2><div class="card"><div class="list">`+recent.map(l=>`<div class="li"><span class="grow">${esc(l.memberName||nameOf(l.memberId))} <span class="note">· ${esc(l.taskName)} · ${keyLabel(l.freq,l.key)}</span></span>${statusChip(l.type,l.n,l.amount,l.reason)}</div>`).join("")+`</div></div></section>`;
   }
   view().innerHTML=`<div class="section" style="gap:22px">${h}</div>`;
 }
-function statusChip(type,n,amount){
+function statusChip(type,n,amount,reason){
+  if(type==="skip") return `<span class="chip muted">Bỏ qua · ${ABS_R[reason]||"vắng"}</span>`;
   if(type==="done") return `<span class="chip ok">Đã làm</span>`;
   if(type==="miss") return `<span class="chip warn">Quên · nhắc lần ${n||1}</span>`;
   if(type==="fine") return `<span class="chip bad">Phạt ${money(amount)}</span>`;
@@ -552,7 +609,8 @@ function statusChip(type,n,amount){
 }
 function card(t){
   const ck=curKey(t.freq), has=M().length>0;
-  const mem=memberById(t.curId)||M()[0];
+  const mem=effOf(t); const nominal=memberById(t.curId);
+  const awayNote=has&&nominal&&mem&&nominal.id!==mem.id?(()=>{const a=absOn(nominal.id,periodDays(t.freq,t.dueKey)[0]||t.dueKey);return `${esc(nominal.name)} đang ${a?ABS_R[a.reason].toLowerCase()+" đến "+dShort(a.to):"nghỉ"}, lượt chuyển cho ${esc(mem.name)}.`})():"";
   const notYet=t.dueKey>ck;
   const prev=logs.filter(l=>l.taskId===t.id&&l.type==="done").sort((a,b)=>b.at-a.at)[0];
   const doneThis=notYet&&prev&&prev.key===ck;              // tuần/tháng này đã có người làm
@@ -566,16 +624,18 @@ function card(t){
     chip=`<span class="chip ${t.miss>=cfg.reminders?"bad":"warn"}">Nhắc lần ${t.miss}/${cfg.reminders}</span>`;
     cls+=t.miss>=cfg.reminders?" danger":" alert"; hint="Đang tới lượt (trễ)";
   } else {chip=`<span class="chip">${t.freq==="day"?"Hôm nay":t.freq==="week"?"Tuần này":"Tháng này"}</span>`;hint="Đang tới lượt"}
-  const queue=has?Array.from({length:Math.min(4,M().length-1)},(_,i)=>memberAt(mem.id,i+1)?.name).filter(Boolean):[];
+  const queue=has?seq(t,Math.min(4,M().length-1)+1).slice(1).map(x=>x.m?.name).filter(Boolean):[];
   const streak=t.miss?missStreak(t):[];
   const undo=lastDone(t.id);
   return `<article class="${cls}">
     <div class="thead"><div><div class="tname">${esc(t.name)}</div><div class="freq">${FREQ[t.freq]}</div></div>${chip}</div>
     ${has?`<div><div class="whohint">${hint}</div><div class="who ${notYet?"later":""}">${esc(mem.name)}</div></div>`:`<div class="who">—</div>`}
+    ${awayNote?`<div class="note" style="color:var(--warn)">${awayNote}</div>`:""}
     ${prev?`<div class="note">Lần gần nhất: <b>${esc(prev.memberName||nameOf(prev.memberId))}</b> đã làm ${keyLabel(t.freq,prev.key)}</div>`:""}
     ${t.miss&&streak.length?`<div class="note">Đã quên: ${streak.map(k=>keyLabel(t.freq,k)).join(", ")}. ${t.miss>=cfg.reminders?`Quên thêm lần nữa sẽ phạt ${money(cfg.fine)}.`:"Việc được dời sang hôm nay."}</div>`:""}
     ${canWrite&&has?`<button class="btn" data-done="${t.id}" ${notYet?"disabled":""}>${btn}</button>`:""}
     ${queue.length?`<div class="queue">Sau đó: ${queue.map(n=>`<span class="chip muted">${esc(n)}</span>`).join("")}</div>`:""}
+    ${admin&&has&&!notYet?`<button class="link" data-skip="${t.id}">Bỏ qua lượt của ${esc(mem.name)} (ốm, công tác...)</button>`:""}
     ${undo&&canWrite&&(admin||Date.now()-undo.at<600000)?`<button class="link" data-undo="${t.id}">Bấm nhầm? Hoàn tác lượt của ${esc(undo.memberName)}</button>`:""}
   </article>`;
 }
@@ -610,7 +670,7 @@ function renderStaff(){
   const sum=id=>{const all=Object.values(grid[id]||{}).flat();const c=k=>all.filter(o=>o.a.status===k).length;
     return {n:all.length,done:c("done"),miss:c("miss")+c("late"),fine:c("fine")}};
   const head=`<tr><th class="sticky">Nhân viên</th>${days.map(dk=>`<th class="dcol ${isOff(dk)?"off":""} ${dk===today?"now":""}">${WD[parse(dk).getDay()]}<br><b>${parse(dk).getDate()}</b></th>`).join("")}<th class="num">Tổng</th></tr>`;
-  const body=rows.map(id=>{const sm=sum(id);return `<tr><th class="sticky"><button class="pname" data-staff="${id}" aria-pressed="${staffFilter===id}">${esc(nameOf(id,extra[id]?.name))}</button></th>${days.map(dk=>`<td class="dcol ${isOff(dk)?"off":""} ${dk===today?"now":""}">${(grid[id]?.[dk]||[]).map(badge).join("")}</td>`).join("")}<td class="num tot"><b>${sm.n}</b> lượt${sm.done?`<br><span class="okt">${sm.done} đã làm</span>`:""}${sm.miss?`<br><span class="wt">${sm.miss} quên</span>`:""}${sm.fine?`<br><span class="bt">${sm.fine} phạt</span>`:""}</td></tr>`}).join("");
+  const body=rows.map(id=>{const sm=sum(id);return `<tr><th class="sticky"><button class="pname" data-staff="${id}" aria-pressed="${staffFilter===id}">${esc(nameOf(id,extra[id]?.name))}</button></th>${days.map(dk=>`<td class="dcol ${isOff(dk)?"off":""} ${dk===today?"now":""} ${absOn(id,dk)?"absent":""}">${absOn(id,dk)&&!isOff(dk)?`<span class="abs">${ABS_R[absOn(id,dk).reason]}</span>`:""}${(grid[id]?.[dk]||[]).map(badge).join("")}</td>`).join("")}<td class="num tot"><b>${sm.n}</b> lượt${sm.done?`<br><span class="okt">${sm.done} đã làm</span>`:""}${sm.miss?`<br><span class="wt">${sm.miss} quên</span>`:""}${sm.fine?`<br><span class="bt">${sm.fine} phạt</span>`:""}</td></tr>`}).join("");
   view().innerHTML=`<div class="section">
     <div class="toolbar">
       <div class="seg" role="group" aria-label="Cách xem">${[["staff","Theo nhân viên"],["cal","Dạng lịch"]].map(([k,l])=>`<button data-calview="${k}" aria-pressed="${calView===k}">${l}</button>`).join("")}</div>
@@ -730,6 +790,18 @@ function renderSetup(){
         <select id="taskFreq" ${dis}><option value="day">Hằng ngày</option><option value="week">Hằng tuần</option><option value="month">Hằng tháng</option></select>
         <button class="btn small" ${dis}>Thêm việc</button></form>
     </section>
+    <section class="card"><h2>Lịch nghỉ (ốm, công tác, nghỉ phép)</h2>
+      <div class="note">Trong khoảng ngày này, người nghỉ được tự động bỏ qua, lượt chuyển cho người kế tiếp. Không tính quên, không phạt. Việc hằng tuần/tháng chỉ bỏ qua khi người đó nghỉ cả tuần/tháng.</div>
+      <div class="list">${[...(cfg.absences||[])].sort((a,b)=>b.from.localeCompare(a.from)).map(a=>{const td=todayKey();const st=a.to<td?`<span class="chip muted">Đã qua</span>`:a.from>td?`<span class="chip">Sắp tới</span>`:`<span class="chip warn">Đang nghỉ</span>`;
+        return `<div class="li"><span class="grow">${esc(nameOf(a.memberId,a.memberName))} <span class="note">· ${ABS_R[a.reason]} · ${dShort(a.from)}${a.to!==a.from?" → "+dShort(a.to):""}</span></span>${st}<button class="icon del" data-absdel="${a.id}" aria-label="Xoá lịch nghỉ" ${dis}>✕</button></div>`}).join("")||'<div class="note">Chưa có lịch nghỉ nào.</div>'}</div>
+      <form id="fAbs" class="row">
+        <select id="absWho" aria-label="Nhân viên" ${dis}>${memOpts("")}</select>
+        <select id="absReason" aria-label="Lý do" ${dis}>${Object.entries(ABS_R).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select>
+        <label class="note" for="absFrom">Từ</label><input type="date" id="absFrom" value="${todayKey()}" ${dis}>
+        <label class="note" for="absTo">đến</label><input type="date" id="absTo" value="${todayKey()}" ${dis}>
+        <button class="btn small" ${dis}>Thêm lịch nghỉ</button>
+      </form>
+    </section>
     <section class="card"><div class="thead"><h2>Quy định</h2>${cfgSaved==="saving"?`<span class="chip muted">Đang lưu...</span>`:cfgSaved==="error"?`<span class="chip bad">Chưa lưu được</span>`:cfgSaved?`<span class="chip ok">${cfgSaved}</span>`:""}</div>
       <div class="row"><label for="cReminders">Số lần nhắc trước khi phạt</label><input type="number" id="cReminders" min="0" max="10" value="${cfg.reminders}" style="width:80px" ${dis}></div>
       <div class="row"><label for="cFine">Tiền phạt mỗi lần (đồng)</label><input type="number" id="cFine" min="0" step="10000" value="${cfg.fine}" style="width:130px" ${dis}></div>
@@ -782,6 +854,18 @@ document.addEventListener("click",async e=>{
   if(b.dataset.go){tab=b.dataset.go;render();return}
   if(b.dataset.adminlogin){if(await ensureUnlocked("admin"))render();return}
   if(b.dataset.lockadmin){await lockAdmin();return}
+  if(b.dataset.skip){
+    if(!(await ensureUnlocked("admin")))return;
+    const t=tasks[b.dataset.skip]; if(!t) return; skipTarget=t.id;
+    document.getElementById("skTitle").textContent=`${t.name} · ${keyLabel(t.freq,t.dueKey)} · ${effOf(t)?.name}. Lượt chuyển cho người kế tiếp, không tính quên.`;
+    document.getElementById("skNote").value=""; document.getElementById("skErr").textContent="";
+    document.getElementById("skipModal").hidden=false; return;
+  }
+  if(b.dataset.absdel){
+    if(b.dataset.confirm!=="1"){b.dataset.confirm="1";b.textContent="Xoá?";b.style.width="auto";b.style.padding="0 8px";return}
+    if(!(await ensureUnlocked("admin")))return;
+    await saveCfg({absences:(cfg.absences||[]).filter(a=>a.id!==b.dataset.absdel)},"Đã xoá lịch nghỉ."); return;
+  }
   if(b.dataset.restorecancel){restoreData=null;restoreName="";restoreErr="";render();return}
   if(b.dataset.restore){
     const c=document.getElementById("restoreConfirm");
@@ -850,6 +934,7 @@ document.addEventListener("change",async e=>{
   }
 });
 document.addEventListener("submit",async e=>{
+  if(e.target.id==="fAbs"||e.target.id==="fSkip"){e.preventDefault();await submitAdminForm(e.target.id);return}
   if(e.target.id!=="fNote"&&e.target.id!=="fNoteDone") return;
   e.preventDefault();
   if(!fs) return;
