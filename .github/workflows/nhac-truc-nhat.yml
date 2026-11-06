@@ -2,7 +2,7 @@ name: Nhắc trực nhật qua Teams
 
 on:
   schedule:
-    - cron: "30 1 * * *"   # 8:30 sáng giờ VN
+    - cron: "30 0 * * *"   # 8:30 sáng giờ VN
     - cron: "30 9 * * *"   # 16:30 chiều giờ VN: nhắc lại việc chưa làm
   workflow_dispatch:
     inputs:
