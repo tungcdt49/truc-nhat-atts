@@ -94,22 +94,23 @@ function makeLogic(cfg, today) {
     const rest = out.filter((x) => x >= today); return rest.length ? rest : out;
   };
   const absentFor = (mid, f, key) => { const ds = periodDays(f, key); return ds.length > 0 && ds.every((d) => absOn(mid, d)); };
-  const pickAt = (startId, f, key) => {
-    if (!M.length) return null; const i = idx(startId);
-    for (let k = 0; k < M.length; k++) { const m = M[(i + k) % M.length]; if (!absentFor(m.id, f, key)) return m; }
-    return M[i % M.length];
+  const size = Math.max(1, Math.min(4, Number(cfg.perTurn) || 1));
+  const pickTeam = (startId, f, key) => {
+    if (!M.length) return []; const i = idx(startId), out = [];
+    for (let k = 0; k < M.length && out.length < size; k++) { const m = M[(i + k) % M.length]; if (!absentFor(m.id, f, key)) out.push(m); }
+    if (!out.length) out.push(M[i % M.length]); return out;
   };
   // Mô phỏng phần "quên → nhắc → phạt" mà app sẽ làm khi có người mở
   function effective(t) {
     const n = { ...t, miss: t.miss || 0 }; const ck = curKey(n.freq); let g = 0; let fined = false;
     if (n.freq === "day") n.dueKey = validDay(n.dueKey);
     while (n.dueKey < ck && g++ < 90) {
-      const mem = pickAt(n.curId, n.freq, n.dueKey) || M[0]; if (!mem) break;
+      const team = pickTeam(n.curId, n.freq, n.dueKey); const mem = team[0]; if (!mem) break;
       n.curId = mem.id; n.miss++;
-      if (n.miss > (cfg.reminders ?? 2)) { n.miss = 0; n.curId = nextMember(mem.id); fined = mem.name; }
+      if (n.miss > (cfg.reminders ?? 2)) { n.miss = 0; n.curId = nextMember(team[team.length - 1].id); fined = team.map((x) => x.name).join(" & "); }
       n.dueKey = nextKey(n.freq, n.dueKey);
     }
-    return { ...n, fined, due: n.dueKey <= ck, person: pickAt(n.curId, n.freq, n.dueKey)?.name || "(chưa có người)" };
+    return { ...n, fined, due: n.dueKey <= ck, person: pickTeam(n.curId, n.freq, n.dueKey).map((x) => x.name).join(" & ") || "(chưa có người)" };
   }
   const away = (cfg.absences || []).filter((a) => a.from <= today && today <= a.to && byId(a.memberId));
   return { isOff, effective, away };
@@ -144,7 +145,7 @@ function buildCard({ cfg, cfgStay, tasks, notes, today, mode, appUrl }) {
   const ABS_R = { om: "ốm", ct: "công tác", phep: "nghỉ phép", khac: "vắng" };
   const groupOf = (t) => (t.group === "stay" ? "stay" : "vp");
   const sections = GROUPS.map(([g, title]) => {
-    const gcfg = g === "stay" ? { ...cfg, members: cfgStay?.members || [], offDays: cfgStay?.offDays || [] } : cfg;
+    const gcfg = g === "stay" ? { ...cfg, members: cfgStay?.members || [], offDays: cfgStay?.offDays || [], perTurn: cfgStay?.perTurn ?? 2 } : cfg;
     return { g, title, gcfg, ...groupLines(gcfg, tasks.filter((t) => groupOf(t) === g), today) };
   });
   const lines = sections.flatMap((x) => x.lines);
