@@ -126,6 +126,12 @@ img{max-width:100%}
 .sheet{background:var(--surface);border-radius:14px;padding:20px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px}
 .pin{font:600 28px var(--f-display);letter-spacing:.5em;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;width:100%;color:var(--fg);background:var(--surface)}
 .err{color:var(--accent);font-size:13px;min-height:1em}
+.groups{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.groups button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;border:1.5px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;padding:10px 14px;cursor:pointer;font:inherit;min-width:0}
+.groups button b{font-family:var(--f-display);font-weight:600;font-size:15px}
+.groups button small{color:var(--muted);font-size:12px}
+.groups button[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.groups button[aria-pressed="true"] b{color:var(--accent)}
 .quick{display:flex;flex-wrap:wrap;gap:6px}
 .quick button{border:1px solid var(--line);background:var(--tint);color:var(--fg);border-radius:99px;padding:5px 11px;font-size:13px;cursor:pointer}
 .quick button:hover{border-color:var(--accent);color:var(--accent)}
@@ -155,6 +161,7 @@ img{max-width:100%}
     <div class="today" id="todayLabel"></div>
   </header>
 
+  <div class="groups" id="groupBar" role="group" aria-label="Khu trực nhật"></div>
   <nav role="tablist">
     <button role="tab" data-tab="home" aria-selected="true">Hôm nay</button>
     <button role="tab" data-tab="notes" aria-selected="false" id="navNotes">Phát sinh</button>
@@ -225,8 +232,19 @@ const firebaseConfig = {
 const DEFAULT_CFG = {members:[], fine:50000, reminders:2, offDays:[0,6]};
 const FREQ = {day:"Hằng ngày", week:"Hằng tuần", month:"Hằng tháng"};
 const WD = ["CN","T2","T3","T4","T5","T6","T7"];
-let db=null, fs=null, uid=null, unlocked=false, admin=false, canWrite=true, ready={cfg:false,tasks:false,logs:false};
+let db=null, fs=null, uid=null, unlocked=false, admin=false, canWrite=true, ready={cfg:false,stay:false,tasks:false,logs:false};
 let cfg = {...DEFAULT_CFG}, tasks = {}, logs = [];
+// ---------- 2 khu: "vp" = cả văn phòng, "stay" = nhân viên ở lại văn phòng ----------
+const GROUPS={vp:"Cả văn phòng",stay:"Ở lại văn phòng"};
+let G="vp"; try{if(localStorage.getItem("ttGroup")==="stay")G="stay"}catch(_){}
+let cfgMain={...DEFAULT_CFG}, cfgStay={members:[],offDays:[]};
+const STAYF=["members","offDays"];                       // khu "ở lại" có danh sách + ngày nghỉ riêng; nhắc, phạt, lịch nghỉ dùng chung
+const cfgFor=g=>g==="stay"?{...cfgMain,members:cfgStay.members||[],offDays:cfgStay.offDays||[]}:cfgMain;
+function withGroup(g,fn){const keep=cfg;cfg=cfgFor(g);try{return fn()}finally{cfg=keep}}
+const groupOf=t=>t?.group==="stay"?"stay":"vp";
+const logGroup=l=>l.group||(tasks[l.taskId]?groupOf(tasks[l.taskId]):"vp");
+const gLogs=()=>logs.filter(l=>logGroup(l)===G);
+function setGroup(g){G=g==="stay"?"stay":"vp";cfg=cfgFor(G);staffFilter="";try{localStorage.setItem("ttGroup",G)}catch(_){}render()}
 let tab="home", calView="staff", staffFilter="", calMode="week", calRef=null, statPeriod="this", lastRunDay=null, busy=false;
 
 // ---------- dates ----------
@@ -275,7 +293,8 @@ function absentFor(mid,freq,key){const ds=periodDays(freq,key);return ds.length>
 function pickAt(startId,freq,key){const n=M().length;if(!n)return null;const i=idxOf(startId);for(let k=0;k<n;k++){const m=M()[(i+k)%n];if(!absentFor(m.id,freq,key))return m}return M()[i%n]}
 const effOf=t=>pickAt(t.curId,t.freq,t.dueKey)||M()[0];
 function seq(t,count){const out=[];let cur=t.curId,key=t.dueKey;for(let i=0;i<count&&M().length;i++){const m=pickAt(cur,t.freq,key);out.push({key,m});cur=nextMember(m.id);key=nextKey(t.freq,key)}return out}
-const sortedTasks=()=>Object.values(tasks).sort((a,b)=>(a.order||0)-(b.order||0)||a.name.localeCompare(b.name));
+const allTasks=()=>Object.values(tasks).sort((a,b)=>(a.order||0)-(b.order||0)||a.name.localeCompare(b.name));
+const sortedTasks=()=>allTasks().filter(t=>groupOf(t)===G);
 
 // ---------- catch-up: missed periods -> reminder -> fine ----------
 function catchUp(t){
@@ -285,7 +304,7 @@ function catchUp(t){
     const mem=pickAt(n.curId,n.freq,n.dueKey)||M()[0];
     if(mem){
       n.curId=mem.id; n.miss=(n.miss||0)+1;
-      const base={taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:n.dueKey,at:Date.now()};
+      const base={group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:n.dueKey,at:Date.now()};
       out.push({id:`miss_${t.id}_${n.dueKey}`,...base,type:"miss",n:n.miss});
       if(n.miss>(cfg.reminders??2)){
         out.push({id:`fine_${t.id}_${n.dueKey}`,...base,type:"fine",amount:cfg.fine??50000,paid:false});
@@ -299,8 +318,8 @@ function catchUp(t){
   return {n,out,changed};
 }
 async function runCatchUp(){
-  if(!db||!unlocked||busy||!ready.cfg||!ready.tasks) return;
-  const work=sortedTasks().map(catchUp).filter(r=>r.changed||r.out.length);
+  if(!db||!unlocked||busy||!ready.cfg||!ready.stay||!ready.tasks) return;
+  const work=allTasks().map(t=>withGroup(groupOf(t),()=>catchUp(t))).filter(r=>r.changed||r.out.length);
   lastRunDay=todayKey();
   if(!work.length) return;
   busy=true;
@@ -321,7 +340,7 @@ async function markDone(tid){
   if(t.dueKey>curKey(t.freq)) return;
   const mem=effOf(t);
   try{
-    await db.doc(`logs/done_${t.id}_${t.dueKey}`).set({taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"done",prevMiss:t.miss||0,at:Date.now()});
+    await db.doc(`logs/done_${t.id}_${t.dueKey}`).set({group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"done",prevMiss:t.miss||0,at:Date.now()});
     const {id,...tb}=t;
     await db.doc("tasks/"+t.id).set({...tb,curId:nextMember(mem.id),miss:0,dueKey:nextKey(t.freq,t.dueKey)});
     toast(`Đã ghi nhận ${mem.name} làm xong "${t.name}". Lượt sau: ${nameOf(nextMember(mem.id))}.`);
@@ -343,10 +362,17 @@ function lastDone(tid){
   return nextKey(t.freq,l.key)===t.dueKey&&t.curId===nextMember(l.memberId)?l:null;
 }
 let cfgSaved="";
+async function addMembers(add){
+  const wasEmpty=!M().length;
+  await saveCfg({members:[...M(),...add]},`Đã thêm ${add.map(m=>m.name).join(", ")} vào khu ${GROUPS[G].toLowerCase()}.`);
+  if(wasEmpty) for(const t of sortedTasks()){const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:add[0].id,miss:0,dueKey:t.freq==="day"?validDay(curKey("day")):curKey(t.freq)})}catch(e){fail(e)}}
+}
 async function saveCfg(patch,msg){
-  cfg={...cfg,...patch}; cfgSaved="saving"; render();
+  const sp={},mp={}; for(const [k,v] of Object.entries(patch)) ((G==="stay"&&STAYF.includes(k))?sp:mp)[k]=v;
+  cfgMain={...cfgMain,...mp}; cfgStay={...cfgStay,...sp}; cfg=cfgFor(G); cfgSaved="saving"; render();
   try{
-    await db.doc("config/main").set(cfg);
+    if(Object.keys(mp).length) await db.doc("config/main").set(cfgMain);
+    if(Object.keys(sp).length) await db.doc("config/stay").set(cfgStay);
     const d=new Date(); cfgSaved=`Đã lưu lúc ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     toast(msg||"Đã lưu cài đặt."); render(); return true;
   }catch(e){cfgSaved="error";fail(e);render();return false}
@@ -378,7 +404,7 @@ async function submitAdminForm(id){
     const t=tasks[skipTarget]; if(!t) return; const mem=effOf(t);
     const reason=document.getElementById("skReason").value, note=document.getElementById("skNote").value.trim();
     try{
-      await db.doc(`logs/skip_${t.id}_${t.dueKey}_${mem.id}`).set({taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"skip",reason,note,at:Date.now()});
+      await db.doc(`logs/skip_${t.id}_${t.dueKey}_${mem.id}`).set({group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"skip",reason,note,at:Date.now()});
       const {id:_,...tb}=t;
       await db.doc("tasks/"+t.id).set({...tb,curId:nextMember(mem.id),miss:0});
       document.getElementById("skipModal").hidden=true; skipTarget=null;
@@ -511,8 +537,9 @@ async function restore(){
       const kL=new Set(d.logs.map(x=>x.id)), kN=new Set(d.notes.map(x=>x.id)), kT=new Set(d.tasks.map(x=>x.id));
       lg.filter(x=>!kL.has(x.id)).forEach(x=>ops.push(b=>b.delete(x.ref)));
       nt.filter(x=>!kN.has(x.id)).forEach(x=>ops.push(b=>b.delete(x.ref)));
-      sortedTasks().filter(t=>!kT.has(t.id)).forEach(t=>ops.push(b=>b.delete(fs.doc("tasks/"+t.id))));
+      allTasks().filter(t=>!kT.has(t.id)).forEach(t=>ops.push(b=>b.delete(fs.doc("tasks/"+t.id))));
       ops.push(b=>b.set(fs.doc("config/main"),d.config));
+      if(d.configStay) ops.push(b=>b.set(fs.doc("config/stay"),d.configStay));
       d.tasks.forEach(t=>ops.push(b=>b.set(fs.doc("tasks/"+t.id),strip(t))));
       d.logs.forEach(x=>ops.push(b=>b.set(fs.doc("logs/"+x.id),strip(x))));
       d.notes.forEach(x=>ops.push(b=>b.set(fs.doc("notes/"+x.id),strip(x))));
@@ -534,7 +561,7 @@ async function backup(){
   try{
     toast("Đang chuẩn bị bản sao lưu...");
     const [lg,nt]=await Promise.all([allDocs("logs"),allDocs("notes")]);
-    const data={app:"Trực nhật ATTS",exportedAt:new Date().toISOString(),config:cfg,tasks:sortedTasks(),logs:lg.map(d=>({id:d.id,...d.data()})),notes:nt.map(d=>({id:d.id,...d.data()}))};
+    const data={app:"Trực nhật ATTS",exportedAt:new Date().toISOString(),config:cfgMain,configStay:cfgStay,tasks:allTasks(),logs:lg.map(d=>({id:d.id,...d.data()})),notes:nt.map(d=>({id:d.id,...d.data()}))};
     const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));
     a.download=`truc-nhat-atts-saoluu-${todayKey()}.json`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);
     toast(`Đã tải bản sao lưu: ${data.logs.length} ghi nhận, ${data.notes.length} việc phát sinh.`);
@@ -547,10 +574,10 @@ async function wipe(){
     const del=async col=>{const ds=await allDocs(col);for(let i=0;i<ds.length;i+=400){const b=fs.batch();ds.slice(i,i+400).forEach(d=>b.delete(d.ref));await b.commit()}return ds.length};
     if(o.logs) nl=await del("logs");
     if(o.notes) nn=await del("notes");
-    if(o.reset&&sortedTasks().length){
+    if(o.reset&&allTasks().length){
       const start=memberById(o.start)?o.start:(M()[0]?.id||null);
       const b=fs.batch();
-      sortedTasks().forEach(t=>b.update(fs.doc("tasks/"+t.id),{curId:start,miss:0,dueKey:t.freq==="day"?validDay(curKey("day")):curKey(t.freq)}));
+      allTasks().forEach(t=>b.update(fs.doc("tasks/"+t.id),{curId:groupOf(t)===G?start:(cfgFor(groupOf(t)).members?.[0]?.id||null),miss:0,dueKey:t.freq==="day"?validDay(curKey("day")):curKey(t.freq)}));
       await b.commit();
     }
     lastRunDay=todayKey();
@@ -567,6 +594,10 @@ function render(){
   if(ae&&KEEP.includes(ae)){const el=document.getElementById(ae);if(el)el.focus()}
 }
 function renderInner(){
+  const gb=document.getElementById("groupBar");
+  if(gb){gb.hidden=tab==="notes";
+    const cnt=g=>allTasks().filter(t=>groupOf(t)===g).length;
+    gb.innerHTML=Object.entries(GROUPS).map(([k,l])=>`<button data-group="${k}" aria-pressed="${G===k}"><b>${l}</b><small>${k==="vp"?(cfgMain.members||[]).length:(cfgStay.members||[]).length} người · ${cnt(k)} việc</small></button>`).join("");}
   const d=new Date();
   const nOpen=notes.filter(n=>!n.done).length; const nb=document.getElementById("navNotes"); if(nb) nb.textContent=nOpen?`Phát sinh (${nOpen})`:"Phát sinh";
   document.getElementById("todayLabel").textContent=`${["Chủ nhật","Thứ hai","Thứ ba","Thứ tư","Thứ năm","Thứ sáu","Thứ bảy"][d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
@@ -594,7 +625,7 @@ function renderHome(){
     const g=ts.filter(t=>t.freq===f); if(!g.length) continue;
     h+=`<section class="section"><h2>${label}</h2><div class="grid">`+g.map(card).join("")+`</div></section>`;
   }
-  const recent=[...logs].sort((a,b)=>b.at-a.at).slice(0,8);
+  const recent=gLogs().sort((a,b)=>b.at-a.at).slice(0,8);
   if(recent.length){
     h+=`<section class="section"><h2>Ghi nhận gần đây</h2><div class="card"><div class="list">`+recent.map(l=>`<div class="li"><span class="grow">${esc(l.memberName||nameOf(l.memberId))} <span class="note">· ${esc(l.taskName)} · ${keyLabel(l.freq,l.key)}</span></span>${statusChip(l.type,l.n,l.amount,l.reason)}</div>`).join("")+`</div></div></section>`;
   }
@@ -744,7 +775,7 @@ function renderStats(){
   const now=todayKey().slice(0,7);
   const prev=(()=>{let[y,m]=now.split("-").map(Number);m--;if(m<1){m=12;y--}return `${y}-${pad(m)}`})();
   const inP=l=>{const mk=l.key.slice(0,7);return statPeriod==="all"||(statPeriod==="this"?mk===now:mk===prev)};
-  const L=logs.filter(inP);
+  const L=gLogs().filter(inP);
   const ids=new Set([...M().map(m=>m.id),...L.map(l=>l.memberId)]);
   const rows=[...ids].map(id=>{
     const ls=L.filter(l=>l.memberId===id);
@@ -774,14 +805,18 @@ function renderSetup(){
   if(!admin){view().innerHTML=`<div class="empty" style="display:flex;flex-direction:column;gap:12px;align-items:center"><h2>Cài đặt đã khoá</h2><div>Chỉ người quản lý được thêm, xoá nhân viên, đổi lượt và sửa quy định phạt.</div><button class="btn" data-adminlogin="1">Nhập mật khẩu quản lý</button></div>`;return}
   const ts=sortedTasks(); const dis=canWrite?"":"disabled";
   view().innerHTML=`<div class="section" style="gap:18px">
-    <section class="card"><h2>Nhân viên trực (theo thứ tự xoay vòng)</h2>
+    <div class="note">Đang cài đặt cho khu <b>${GROUPS[G]}</b>. Nhân viên, công việc và ngày nghỉ của mỗi khu là riêng. Quy định nhắc, phạt và lịch nghỉ dùng chung.</div>
+    <section class="card"><h2>Nhân viên trực · ${GROUPS[G]} (theo thứ tự xoay vòng)</h2>
       <div class="list">${M().map((m,i)=>`<div class="li"><span class="grow">${i+1}. ${esc(m.name)}</span>
         <button class="icon" data-mv="${m.id}" data-d="-1" aria-label="Lên" ${dis}>↑</button><button class="icon" data-mv="${m.id}" data-d="1" aria-label="Xuống" ${dis}>↓</button>
         <button class="icon del" data-rm="${m.id}" aria-label="Xoá ${esc(m.name)}" ${dis}>✕</button></div>`).join("")||'<div class="note">Chưa có ai. Thêm tên bên dưới.</div>'}</div>
       <form id="fMem" class="row"><input type="text" id="memName" placeholder="Tên nhân viên, ví dụ: Minh" ${dis}><button class="btn small" ${dis}>Thêm</button></form>
       <div class="note">Có thể dán nhiều tên, cách nhau bằng dấu phẩy.</div>
+      ${G==="stay"?(()=>{const have=new Set(M().map(m=>m.id));const rest=(cfgMain.members||[]).filter(m=>!have.has(m.id));
+        return rest.length?`<div class="row"><label for="addFromVp" class="note">Hoặc chọn từ danh sách cả văn phòng</label><select id="addFromVp" ${dis}><option value="">Chọn nhân viên</option>${rest.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
+        <div class="note">Chọn từ danh sách này thì lịch nghỉ (ốm, công tác) của người đó áp dụng cho cả hai khu.</div>`:""})():""}
     </section>
-    <section class="card"><h2>Công việc</h2>
+    <section class="card"><h2>Công việc · ${GROUPS[G]}</h2>
       <div class="list">${ts.map(t=>`<div class="li"><span class="grow">${esc(t.name)} <span class="note">· ${FREQ[t.freq]}</span></span>
         <label class="note" for="cur_${t.id}">Đang tới lượt</label>
         <select id="cur_${t.id}" data-cur="${t.id}" ${dis}>${M().map(m=>`<option value="${m.id}" ${m.id===(t.curId||M()[0]?.id)?"selected":""}>${esc(m.name)}</option>`).join("")}</select>
@@ -803,9 +838,10 @@ function renderSetup(){
       </form>
     </section>
     <section class="card"><div class="thead"><h2>Quy định</h2>${cfgSaved==="saving"?`<span class="chip muted">Đang lưu...</span>`:cfgSaved==="error"?`<span class="chip bad">Chưa lưu được</span>`:cfgSaved?`<span class="chip ok">${cfgSaved}</span>`:""}</div>
+      <div class="note">Số lần nhắc và tiền phạt dùng chung cho cả hai khu.</div>
       <div class="row"><label for="cReminders">Số lần nhắc trước khi phạt</label><input type="number" id="cReminders" min="0" max="10" value="${cfg.reminders}" style="width:80px" ${dis}></div>
       <div class="row"><label for="cFine">Tiền phạt mỗi lần (đồng)</label><input type="number" id="cFine" min="0" step="10000" value="${cfg.fine}" style="width:130px" ${dis}></div>
-      <div class="row"><span>Ngày nghỉ (không tính việc hằng ngày):</span>
+      <div class="row"><span>Ngày nghỉ của khu ${GROUPS[G].toLowerCase()} (không tính việc hằng ngày):</span>
         ${[6,0].map(d=>`<label><input type="checkbox" data-off="${d}" ${cfg.offDays.includes(d)?"checked":""} ${dis}> ${d===6?"Thứ bảy":"Chủ nhật"}</label>`).join("")}</div>
       <div class="note">Cách tính: quên lần 1 → nhắc lần 1, việc dời sang hôm sau, vẫn người đó làm. Quên lần ${cfg.reminders} → nhắc lần ${cfg.reminders}. Quên lần ${cfg.reminders+1} → phạt ${money(cfg.fine)} và chuyển lượt cho người tiếp theo. Làm đúng → chuyển ngay người tiếp theo.</div>
     </section>
@@ -850,6 +886,7 @@ document.addEventListener("click",async e=>{
     if(b.dataset.confirm!=="1"){b.dataset.confirm="1";b.textContent="Bấm lần nữa để xoá";return}
     if(!(await ensureUnlocked("admin")))return;try{await fs.doc("notes/"+b.dataset.ndel).delete();toast("Đã xoá.")}catch(err){fail(err)}return;
   }
+  if(b.dataset.group){setGroup(b.dataset.group);return}
   if(b.dataset.tab){tab=b.dataset.tab;render();return}
   if(b.dataset.go){tab=b.dataset.go;render();return}
   if(b.dataset.adminlogin){if(await ensureUnlocked("admin"))render();return}
@@ -915,6 +952,7 @@ document.addEventListener("click",async e=>{
 document.addEventListener("change",async e=>{
   const el=e.target;
   if(el.id==="staffSel"){staffFilter=el.value;render();return}
+  if(el.id==="addFromVp"){const m=(cfgMain.members||[]).find(x=>x.id===el.value);if(!m)return;if(!(await ensureUnlocked("admin"))){render();return}await addMembers([{id:m.id,name:m.name}]);return}
   if(el.id==="wLogs"){wipeOpts.logs=el.checked;return}
   if(el.id==="restoreFile"){if(el.files?.[0])await readBackup(el.files[0]);return}
   if(el.id==="rReplace"){restoreMode="replace";return}
@@ -967,17 +1005,14 @@ document.addEventListener("submit",async e=>{
     if(!names.length) return;
     document.getElementById("memName").value="";
     const add=names.map(n=>({id:"m"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name:n}));
-    const wasEmpty=!M().length;
-    await saveCfg({members:[...M(),...add]});
-    if(wasEmpty) for(const t of sortedTasks()){const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:add[0].id,miss:0,dueKey:t.freq==="day"?validDay(curKey("day")):curKey(t.freq)})}catch(err){fail(err)}}
-    toast(`Đã thêm ${names.join(", ")}.`);
+    await addMembers(add);
   }
   if(e.target.id==="fTask"){
     const name=document.getElementById("taskName").value.trim(); const freq=document.getElementById("taskFreq").value;
     document.getElementById("taskName").value="";
     if(!name) return;
     const id="t"+Date.now().toString(36);
-    try{await db.doc("tasks/"+id).set({name,freq,order:Object.keys(tasks).length+1,curId:M()[0]?.id||null,miss:0,dueKey:freq==="day"?validDay(curKey("day")):curKey(freq)});toast(`Đã thêm việc "${name}".`)}catch(err){fail(err)}
+    try{await db.doc("tasks/"+id).set({group:G,name,freq,order:Object.keys(tasks).length+1,curId:M()[0]?.id||null,miss:0,dueKey:freq==="day"?validDay(curKey("day")):curKey(freq)});toast(`Đã thêm việc "${name}".`)}catch(err){fail(err)}
   }
 });
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){render();if(lastRunDay!==todayKey())runCatchUp()}});
@@ -1030,9 +1065,10 @@ function makeDb(){
     try{const a=await fs.doc("admins/"+uid).get();admin=a.exists}catch(_){admin=false}
     if(admin) unlocked=true;
     document.getElementById("ro").hidden=unlocked;
-  }catch(e){console.warn(e);showErr(e);ready={cfg:true,tasks:true,logs:true};render();return}
-  const maybeRun=()=>{if(ready.cfg&&ready.tasks&&ready.logs&&lastRunDay!==todayKey()) runCatchUp()};
-  db.doc("config/main").onSnapshot(s=>{cfg={...DEFAULT_CFG,...(s.exists?s.data():{})};cfg.offDays=[...(cfg.offDays||[])];ready.cfg=true;render();if(!s.metadata.fromCache)maybeRun()},e=>{console.warn(e);showErr(e)});
+  }catch(e){console.warn(e);showErr(e);ready={cfg:true,stay:true,tasks:true,logs:true};render();return}
+  const maybeRun=()=>{if(ready.cfg&&ready.stay&&ready.tasks&&ready.logs&&lastRunDay!==todayKey()) runCatchUp()};
+  db.doc("config/main").onSnapshot(s=>{cfgMain={...DEFAULT_CFG,...(s.exists?s.data():{})};cfgMain.offDays=[...(cfgMain.offDays||[])];cfg=cfgFor(G);ready.cfg=true;render();if(!s.metadata.fromCache)maybeRun()},e=>{console.warn(e);showErr(e)});
+  db.doc("config/stay").onSnapshot(s=>{cfgStay={members:[],offDays:[],...(s.exists?s.data():{})};cfg=cfgFor(G);ready.stay=true;render();if(!s.metadata.fromCache)maybeRun()},e=>{console.warn(e);ready.stay=true;render()});
   db.collection("tasks").onSnapshot(s=>{tasks={};s.docs.forEach(d=>tasks[d.id]={id:d.id,...d.data()});ready.tasks=true;render();if(!s.metadata.fromCache)maybeRun()},e=>{console.warn(e);showErr(e);ready.tasks=true;render()});
   fs.collection("notes").orderBy("createdAt","desc").limit(300).onSnapshot(s=>{notes=s.docs.map(d=>({id:d.id,...d.data()}));notesReady=true;render()},e=>{console.warn(e);showErr(e);notesReady=true;render()});
   db.collection("logs").orderBy("at","desc").limit(1000).onSnapshot(s=>{logs=s.docs.map(d=>({id:d.id,...d.data()}));ready.logs=true;render();if(!s.metadata.fromCache)maybeRun()},e=>console.warn(e));
