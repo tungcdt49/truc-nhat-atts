@@ -229,7 +229,7 @@ const firebaseConfig = {
 
 <script>
 (() => {
-const DEFAULT_CFG = {members:[], fine:50000, reminders:2, offDays:[0,6]};
+const DEFAULT_CFG = {members:[], fine:50000, reminders:2, offDays:[0,6], perTurn:1};
 const FREQ = {day:"Hằng ngày", week:"Hằng tuần", month:"Hằng tháng"};
 const WD = ["CN","T2","T3","T4","T5","T6","T7"];
 let db=null, fs=null, uid=null, unlocked=false, admin=false, canWrite=true, ready={cfg:false,stay:false,tasks:false,logs:false};
@@ -238,8 +238,8 @@ let cfg = {...DEFAULT_CFG}, tasks = {}, logs = [];
 const GROUPS={vp:"Cả văn phòng",stay:"Ở lại văn phòng"};
 let G="vp"; try{if(localStorage.getItem("ttGroup")==="stay")G="stay"}catch(_){}
 let cfgMain={...DEFAULT_CFG}, cfgStay={members:[],offDays:[]};
-const STAYF=["members","offDays"];                       // khu "ở lại" có danh sách + ngày nghỉ riêng; nhắc, phạt, lịch nghỉ dùng chung
-const cfgFor=g=>g==="stay"?{...cfgMain,members:cfgStay.members||[],offDays:cfgStay.offDays||[]}:cfgMain;
+const STAYF=["members","offDays","perTurn"];                       // khu "ở lại" có danh sách + ngày nghỉ riêng; nhắc, phạt, lịch nghỉ dùng chung
+const cfgFor=g=>g==="stay"?{...cfgMain,members:cfgStay.members||[],offDays:cfgStay.offDays||[],perTurn:cfgStay.perTurn??2}:cfgMain;
 function withGroup(g,fn){const keep=cfg;cfg=cfgFor(g);try{return fn()}finally{cfg=keep}}
 const groupOf=t=>t?.group==="stay"?"stay":"vp";
 const logGroup=l=>l.group||(tasks[l.taskId]?groupOf(tasks[l.taskId]):"vp");
@@ -290,9 +290,18 @@ function periodDays(freq,key){
 }
 // Vắng cả kỳ (ngày / mọi ngày làm việc trong tuần / tháng) thì bỏ qua
 function absentFor(mid,freq,key){const ds=periodDays(freq,key);return ds.length>0&&ds.every(d=>absOn(mid,d))}
-function pickAt(startId,freq,key){const n=M().length;if(!n)return null;const i=idxOf(startId);for(let k=0;k<n;k++){const m=M()[(i+k)%n];if(!absentFor(m.id,freq,key))return m}return M()[i%n]}
+// Nhóm trực của 1 lượt: lấy đủ "số người mỗi lượt" theo vòng xoay, bỏ qua người nghỉ
+const teamSize=()=>Math.max(1,Math.min(4,Number(cfg.perTurn)||1));
+function pickTeam(startId,freq,key){const n=M().length;if(!n)return [];const i=idxOf(startId),out=[];
+  for(let k=0;k<n&&out.length<teamSize();k++){const m=M()[(i+k)%n];if(!absentFor(m.id,freq,key))out.push(m)}
+  if(!out.length)out.push(M()[i%n]);return out}
+const pickAt=(startId,freq,key)=>pickTeam(startId,freq,key)[0]||null;
+const teamOf=t=>pickTeam(t.curId,t.freq,t.dueKey);
+const teamNames=team=>team.map(m=>m.name).join(" & ");
+const afterTeam=team=>nextMember(team[team.length-1].id);
+const logIds=l=>l.memberIds||[l.memberId];
 const effOf=t=>pickAt(t.curId,t.freq,t.dueKey)||M()[0];
-function seq(t,count){const out=[];let cur=t.curId,key=t.dueKey;for(let i=0;i<count&&M().length;i++){const m=pickAt(cur,t.freq,key);out.push({key,m});cur=nextMember(m.id);key=nextKey(t.freq,key)}return out}
+function seq(t,count){const out=[];let cur=t.curId,key=t.dueKey;for(let i=0;i<count&&M().length;i++){const team=pickTeam(cur,t.freq,key);out.push({key,m:team[0],team});cur=afterTeam(team);key=nextKey(t.freq,key)}return out}
 const allTasks=()=>Object.values(tasks).sort((a,b)=>(a.order||0)-(b.order||0)||a.name.localeCompare(b.name));
 const sortedTasks=()=>allTasks().filter(t=>groupOf(t)===G);
 
@@ -301,14 +310,15 @@ function catchUp(t){
   const n={...t}; const out=[]; const ck=curKey(n.freq); let g=0;
   if(n.freq==="day"){const v=validDay(n.dueKey); if(v!==n.dueKey) n.dueKey=v;}
   while(n.dueKey<ck && g++<90){
-    const mem=pickAt(n.curId,n.freq,n.dueKey)||M()[0];
+    const team=pickTeam(n.curId,n.freq,n.dueKey), mem=team[0];
     if(mem){
       n.curId=mem.id; n.miss=(n.miss||0)+1;
-      const base={group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:n.dueKey,at:Date.now()};
+      const base={group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberIds:team.map(m=>m.id),memberName:teamNames(team),key:n.dueKey,at:Date.now()};
       out.push({id:`miss_${t.id}_${n.dueKey}`,...base,type:"miss",n:n.miss});
       if(n.miss>(cfg.reminders??2)){
-        out.push({id:`fine_${t.id}_${n.dueKey}`,...base,type:"fine",amount:cfg.fine??50000,paid:false});
-        n.miss=0; n.curId=nextMember(mem.id);
+        // mỗi người trong nhóm nhận 1 khoản phạt riêng
+        team.forEach(m=>out.push({id:team.length>1?`fine_${t.id}_${n.dueKey}_${m.id}`:`fine_${t.id}_${n.dueKey}`,...base,memberId:m.id,memberIds:[m.id],memberName:m.name,type:"fine",amount:cfg.fine??50000,paid:false}));
+        n.miss=0; n.curId=afterTeam(team);
       }
     }
     n.dueKey=nextKey(n.freq,n.dueKey);
@@ -338,12 +348,13 @@ async function runCatchUp(){
 async function markDone(tid){
   const t=tasks[tid]; if(!t||!M().length) return;
   if(t.dueKey>curKey(t.freq)) return;
-  const mem=effOf(t);
+  const team=teamOf(t), mem=team[0], nx=afterTeam(team), nk=nextKey(t.freq,t.dueKey);
+  const nextTeam=teamNames(pickTeam(nx,t.freq,nk));
   try{
-    await db.doc(`logs/done_${t.id}_${t.dueKey}`).set({group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"done",prevMiss:t.miss||0,at:Date.now()});
+    await db.doc(`logs/done_${t.id}_${t.dueKey}`).set({group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberIds:team.map(m=>m.id),memberName:teamNames(team),key:t.dueKey,type:"done",prevMiss:t.miss||0,at:Date.now()});
     const {id,...tb}=t;
-    await db.doc("tasks/"+t.id).set({...tb,curId:nextMember(mem.id),miss:0,dueKey:nextKey(t.freq,t.dueKey)});
-    toast(`Đã ghi nhận ${mem.name} làm xong "${t.name}". Lượt sau: ${nameOf(nextMember(mem.id))}.`);
+    await db.doc("tasks/"+t.id).set({...tb,curId:nx,miss:0,dueKey:nk});
+    toast(`Đã ghi nhận ${teamNames(team)} làm xong "${t.name}". Lượt sau: ${nextTeam}.`);
   }catch(e){fail(e)}
 }
 async function undoDone(tid){
@@ -359,7 +370,8 @@ function lastDone(tid){
   const t=tasks[tid]; if(!t) return null;
   const l=logs.filter(x=>x.taskId===tid&&x.type==="done").sort((a,b)=>b.at-a.at)[0];
   if(!l) return null;
-  return nextKey(t.freq,l.key)===t.dueKey&&t.curId===nextMember(l.memberId)?l:null;
+  const ids=logIds(l);
+  return nextKey(t.freq,l.key)===t.dueKey&&t.curId===nextMember(ids[ids.length-1])?l:null;
 }
 let cfgSaved="";
 async function addMembers(add){
@@ -401,14 +413,14 @@ async function submitAdminForm(id){
     await saveCfg({absences:list},`Đã thêm: ${nameOf(who)} ${ABS_R[reason].toLowerCase()} ${dShort(from)}${to!==from?" → "+dShort(to):""}.`);
   }
   if(id==="fSkip"){
-    const t=tasks[skipTarget]; if(!t) return; const mem=effOf(t);
+    const t=tasks[skipTarget]; if(!t) return; const team=teamOf(t), mem=team[0], nx=afterTeam(team);
     const reason=document.getElementById("skReason").value, note=document.getElementById("skNote").value.trim();
     try{
-      await db.doc(`logs/skip_${t.id}_${t.dueKey}_${mem.id}`).set({group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberName:mem.name,key:t.dueKey,type:"skip",reason,note,at:Date.now()});
+      await db.doc(`logs/skip_${t.id}_${t.dueKey}_${mem.id}`).set({group:groupOf(t),taskId:t.id,taskName:t.name,freq:t.freq,memberId:mem.id,memberIds:team.map(m=>m.id),memberName:teamNames(team),key:t.dueKey,type:"skip",reason,note,at:Date.now()});
       const {id:_,...tb}=t;
-      await db.doc("tasks/"+t.id).set({...tb,curId:nextMember(mem.id),miss:0});
+      await db.doc("tasks/"+t.id).set({...tb,curId:nx,miss:0});
       document.getElementById("skipModal").hidden=true; skipTarget=null;
-      toast(`Đã bỏ qua lượt của ${mem.name}. Người làm: ${effOf({...t,curId:nextMember(mem.id),miss:0})?.name}.`);
+      toast(`Đã bỏ qua lượt của ${teamNames(team)}. Người làm: ${teamNames(pickTeam(nx,t.freq,t.dueKey))}.`);
     }catch(e){document.getElementById("skErr").textContent="Chưa lưu được. Kiểm tra mạng hoặc mật khẩu quản lý."}
   }
 }
@@ -430,7 +442,7 @@ document.getElementById("fPin").addEventListener("submit",async e=>{
   e.preventDefault(); e.stopPropagation();
   const pin=document.getElementById("pinInput").value.trim(); if(!pin) return;
   try{
-    if(pinLevel==="admin"){await fs.doc("admins/"+uid).set({pin,at:Date.now()});admin=true;toast("Đã mở khoá quyền quản lý trên máy này.")}
+    if(pinLevel==="admin"){await fs.doc("admins/"+uid).set({pin,at:Date.now(),ym:todayKey().slice(0,7)});admin=true;toast("Đã mở khoá quyền quản lý trên máy này.")}
     else{await fs.doc("unlocks/"+uid).set({pin,at:Date.now()});toast("Đã mở khoá máy này.")}
     unlocked=true; document.getElementById("ro").hidden=true; closePin(true); render(); runCatchUp();
   }catch(err){document.getElementById("pinErr").textContent=err?.code==="permission-denied"?(pinLevel==="admin"?"Mật khẩu quản lý không đúng.":"Mã PIN không đúng. Thử lại."):"Không kiểm tra được, kiểm tra mạng."}
@@ -446,12 +458,16 @@ let tt; function toast(m){const el=document.getElementById("toast");el.textConte
 function assign(t,key){
   const ls=logs.filter(l=>l.taskId===t.id&&l.key===key);
   const pick=ls.find(l=>l.type==="done")||ls.find(l=>l.type==="fine")||ls.find(l=>l.type==="miss");
-  if(key<t.dueKey) return pick?{id:pick.memberId,name:pick.memberName||nameOf(pick.memberId),status:pick.type,log:pick}:null;
+  if(key<t.dueKey){
+    if(!pick) return null;
+    const ids=pick.type==="fine"?ls.filter(l=>l.type==="fine").map(l=>l.memberId):logIds(pick);
+    return {id:ids[0],ids,name:pick.type==="fine"?ls.filter(l=>l.type==="fine").map(l=>l.memberName).join(" & "):(pick.memberName||nameOf(pick.memberId)),status:pick.type,log:pick};
+  }
   if(!M().length) return null;
-  let c=t.dueKey,cur=t.curId,g=0,m=null;
-  while(g++<500){m=pickAt(cur,t.freq,c);if(c>=key)break;cur=nextMember(m.id);c=nextKey(t.freq,c)}
+  let c=t.dueKey,cur=t.curId,g=0,team=[];
+  while(g++<500){team=pickTeam(cur,t.freq,c);if(c>=key)break;cur=afterTeam(team);c=nextKey(t.freq,c)}
   if(c!==key) return null;
-  return {id:m?.id,name:m?.name,status:key===t.dueKey?(t.miss?"late":"due"):"future",miss:t.miss||0};
+  return {id:team[0]?.id,ids:team.map(m=>m.id),name:teamNames(team),status:key===t.dueKey?(t.miss?"late":"due"):"future",miss:t.miss||0};
 }
 function missStreak(t){
   return logs.filter(l=>l.taskId===t.id&&l.type==="miss"&&l.memberId===t.curId).sort((a,b)=>b.at-a.at).slice(0,t.miss||0).map(l=>l.key);
@@ -640,8 +656,8 @@ function statusChip(type,n,amount,reason){
 }
 function card(t){
   const ck=curKey(t.freq), has=M().length>0;
-  const mem=effOf(t); const nominal=memberById(t.curId);
-  const awayNote=has&&nominal&&mem&&nominal.id!==mem.id?(()=>{const a=absOn(nominal.id,periodDays(t.freq,t.dueKey)[0]||t.dueKey);return `${esc(nominal.name)} đang ${a?ABS_R[a.reason].toLowerCase()+" đến "+dShort(a.to):"nghỉ"}, lượt chuyển cho ${esc(mem.name)}.`})():"";
+  const team=has?teamOf(t):[]; const mem=team[0]; const nominal=memberById(t.curId);
+  const awayNote=has&&nominal&&mem&&nominal.id!==mem.id?(()=>{const a=absOn(nominal.id,periodDays(t.freq,t.dueKey)[0]||t.dueKey);return `${esc(nominal.name)} đang ${a?ABS_R[a.reason].toLowerCase()+" đến "+dShort(a.to):"nghỉ"}, lượt chuyển cho ${esc(teamNames(team))}.`})():"";
   const notYet=t.dueKey>ck;
   const prev=logs.filter(l=>l.taskId===t.id&&l.type==="done").sort((a,b)=>b.at-a.at)[0];
   const doneThis=notYet&&prev&&prev.key===ck;              // tuần/tháng này đã có người làm
@@ -655,18 +671,18 @@ function card(t){
     chip=`<span class="chip ${t.miss>=cfg.reminders?"bad":"warn"}">Nhắc lần ${t.miss}/${cfg.reminders}</span>`;
     cls+=t.miss>=cfg.reminders?" danger":" alert"; hint="Đang tới lượt (trễ)";
   } else {chip=`<span class="chip">${t.freq==="day"?"Hôm nay":t.freq==="week"?"Tuần này":"Tháng này"}</span>`;hint="Đang tới lượt"}
-  const queue=has?seq(t,Math.min(4,M().length-1)+1).slice(1).map(x=>x.m?.name).filter(Boolean):[];
+  const queue=has?seq(t,Math.max(1,Math.min(4,Math.floor((M().length-1)/teamSize())))+1).slice(1).map(x=>teamNames(x.team)).filter(Boolean):[];
   const streak=t.miss?missStreak(t):[];
   const undo=lastDone(t.id);
   return `<article class="${cls}">
     <div class="thead"><div><div class="tname">${esc(t.name)}</div><div class="freq">${FREQ[t.freq]}</div></div>${chip}</div>
-    ${has?`<div><div class="whohint">${hint}</div><div class="who ${notYet?"later":""}">${esc(mem.name)}</div></div>`:`<div class="who">—</div>`}
+    ${has?`<div><div class="whohint">${hint}</div><div class="who ${notYet?"later":""}">${esc(teamNames(team))}</div></div>`:`<div class="who">—</div>`}
     ${awayNote?`<div class="note" style="color:var(--warn)">${awayNote}</div>`:""}
     ${prev?`<div class="note">Lần gần nhất: <b>${esc(prev.memberName||nameOf(prev.memberId))}</b> đã làm ${keyLabel(t.freq,prev.key)}</div>`:""}
     ${t.miss&&streak.length?`<div class="note">Đã quên: ${streak.map(k=>keyLabel(t.freq,k)).join(", ")}. ${t.miss>=cfg.reminders?`Quên thêm lần nữa sẽ phạt ${money(cfg.fine)}.`:"Việc được dời sang hôm nay."}</div>`:""}
     ${canWrite&&has?`<button class="btn" data-done="${t.id}" ${notYet?"disabled":""}>${btn}</button>`:""}
     ${queue.length?`<div class="queue">Sau đó: ${queue.map(n=>`<span class="chip muted">${esc(n)}</span>`).join("")}</div>`:""}
-    ${admin&&has&&!notYet?`<button class="link" data-skip="${t.id}">Bỏ qua lượt của ${esc(mem.name)} (ốm, công tác...)</button>`:""}
+    ${admin&&has&&!notYet?`<button class="link" data-skip="${t.id}">Bỏ qua lượt của ${esc(teamNames(team))} (ốm, công tác...)</button>`:""}
     ${undo&&canWrite&&(admin||Date.now()-undo.at<600000)?`<button class="link" data-undo="${t.id}">Bấm nhầm? Hoàn tác lượt của ${esc(undo.memberName)}</button>`:""}
   </article>`;
 }
@@ -687,7 +703,7 @@ function renderStaff(){
     title=`${pad(parse(days[0]).getDate())}/${pad(parse(days[0]).getMonth()+1)} – ${pad(parse(days[6]).getDate())}/${pad(parse(days[6]).getMonth()+1)}`;}
   else{const ym=calRef.slice(0,7);let d=ym+"-01";while(d.slice(0,7)===ym){days.push(d);d=addDays(d,1)}const[y,m]=ym.split("-").map(Number);title=`Tháng ${m}/${y}`}
   // gom lịch: grid[memberId][dayKey] = [{t,a,kind}]
-  const grid={}, extra={}; const put=(id,dk,o)=>{if(!id)return;((grid[id]??={})[dk]??=[]).push(o);(extra[id]??={name:o.a.name})};
+  const grid={}, extra={}; const put=(_,dk,o)=>{for(const id of (o.a.ids||[o.a.id])){if(!id)continue;((grid[id]??={})[dk]??=[]).push(o);(extra[id]??={name:o.a.name})}};
   for(const t of ts){
     if(t.freq==="day") days.forEach(dk=>{if(isOff(dk))return;const a=assign(t,dk);if(a)put(a.id,dk,{t,a})});
     if(t.freq==="week"){const seen=new Set();days.forEach(dk=>{const wk=monday(dk);if(seen.has(wk))return;seen.add(wk);const a=assign(t,wk);if(a)put(a.id,days.includes(wk)?wk:days[0],{t,a,kind:"tuần"})})}
@@ -776,11 +792,11 @@ function renderStats(){
   const prev=(()=>{let[y,m]=now.split("-").map(Number);m--;if(m<1){m=12;y--}return `${y}-${pad(m)}`})();
   const inP=l=>{const mk=l.key.slice(0,7);return statPeriod==="all"||(statPeriod==="this"?mk===now:mk===prev)};
   const L=gLogs().filter(inP);
-  const ids=new Set([...M().map(m=>m.id),...L.map(l=>l.memberId)]);
+  const ids=new Set([...M().map(m=>m.id),...L.flatMap(l=>logIds(l))]);
   const rows=[...ids].map(id=>{
-    const ls=L.filter(l=>l.memberId===id);
+    const ls=L.filter(l=>logIds(l).includes(id));
     const fines=ls.filter(l=>l.type==="fine");
-    return {id,name:ls[0]?.memberName&&!memberById(id)?ls[0].memberName+" (đã xoá)":nameOf(id),
+    return {id,name:!memberById(id)?((ls.find(l=>l.memberId===id&&logIds(l).length===1)?.memberName||"Người cũ")+" (đã xoá)"):nameOf(id),
       done:ls.filter(l=>l.type==="done").length, miss:ls.filter(l=>l.type==="miss").length,
       fines:fines.length, total:fines.reduce((s,l)=>s+(l.amount||0),0), unpaid:fines.filter(l=>!l.paid).reduce((s,l)=>s+(l.amount||0),0)};
   }).sort((a,b)=>b.done-a.done||a.miss-b.miss);
@@ -838,7 +854,8 @@ function renderSetup(){
       </form>
     </section>
     <section class="card"><div class="thead"><h2>Quy định</h2>${cfgSaved==="saving"?`<span class="chip muted">Đang lưu...</span>`:cfgSaved==="error"?`<span class="chip bad">Chưa lưu được</span>`:cfgSaved?`<span class="chip ok">${cfgSaved}</span>`:""}</div>
-      <div class="note">Số lần nhắc và tiền phạt dùng chung cho cả hai khu.</div>
+      <div class="row"><label for="cPerTurn">Số người mỗi lượt (khu ${GROUPS[G].toLowerCase()})</label><input type="number" id="cPerTurn" min="1" max="4" value="${teamSize()}" style="width:80px" ${dis}></div>
+      <div class="note">Số lần nhắc và tiền phạt dùng chung cho cả hai khu. Nhóm quên quá số lần nhắc thì mỗi người trong nhóm bị phạt riêng.</div>
       <div class="row"><label for="cReminders">Số lần nhắc trước khi phạt</label><input type="number" id="cReminders" min="0" max="10" value="${cfg.reminders}" style="width:80px" ${dis}></div>
       <div class="row"><label for="cFine">Tiền phạt mỗi lần (đồng)</label><input type="number" id="cFine" min="0" step="10000" value="${cfg.fine}" style="width:130px" ${dis}></div>
       <div class="row"><span>Ngày nghỉ của khu ${GROUPS[G].toLowerCase()} (không tính việc hằng ngày):</span>
@@ -894,7 +911,7 @@ document.addEventListener("click",async e=>{
   if(b.dataset.skip){
     if(!(await ensureUnlocked("admin")))return;
     const t=tasks[b.dataset.skip]; if(!t) return; skipTarget=t.id;
-    document.getElementById("skTitle").textContent=`${t.name} · ${keyLabel(t.freq,t.dueKey)} · ${effOf(t)?.name}. Lượt chuyển cho người kế tiếp, không tính quên.`;
+    document.getElementById("skTitle").textContent=`${t.name} · ${keyLabel(t.freq,t.dueKey)} · ${teamNames(teamOf(t))}. Lượt chuyển cho người kế tiếp, không tính quên.`;
     document.getElementById("skNote").value=""; document.getElementById("skErr").textContent="";
     document.getElementById("skipModal").hidden=false; return;
   }
@@ -960,9 +977,10 @@ document.addEventListener("change",async e=>{
   if(el.id==="wNotes"){wipeOpts.notes=el.checked;return}
   if(el.id==="wReset"){wipeOpts.reset=el.checked;render();return}
   if(el.id==="wStart"){wipeOpts.start=el.value;return}
-  if(!(el.dataset.cur||el.id==="cReminders"||el.id==="cFine"||el.dataset.off!==undefined)) return;
+  if(!(el.dataset.cur||el.id==="cPerTurn"||el.id==="cReminders"||el.id==="cFine"||el.dataset.off!==undefined)) return;
   if(!(await ensureUnlocked("admin"))){render();return}
   if(el.dataset.cur){const t=tasks[el.dataset.cur];const {id,...tb}=t;try{await db.doc("tasks/"+id).set({...tb,curId:el.value,miss:0});toast("Đã đổi người đang tới lượt.")}catch(err){fail(err)}}
+  if(el.id==="cPerTurn"){const v=Math.max(1,Math.min(4,Math.round(Number(el.value)||1)));saveCfg({perTurn:v},`Đã lưu: khu ${GROUPS[G].toLowerCase()} trực ${v} người mỗi lượt.`);return}
   if(el.id==="cReminders"){const v=Math.max(0,Math.min(10,Number(el.value)||0));saveCfg({reminders:v},`Đã lưu: nhắc ${v} lần rồi mới phạt.`)}
   if(el.id==="cFine"){const v=Math.max(0,Number(el.value)||0);saveCfg({fine:v},`Đã lưu: phạt ${money(v)} mỗi lần.`)}
   if(el.dataset.off!==undefined){
@@ -1017,6 +1035,8 @@ document.addEventListener("submit",async e=>{
 });
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){render();if(lastRunDay!==todayKey())runCatchUp()}});
 setInterval(()=>{if(lastRunDay&&lastRunDay!==todayKey()){render();runCatchUp()}},60000);
+// Sang tháng mới: quyền quản lý trên máy này hết hạn, phải nhập mật khẩu của tháng mới
+setInterval(async()=>{if(admin&&fs&&uid){try{const a=await fs.doc("admins/"+uid).get();if(!a.exists||a.data().ym!==todayKey().slice(0,7)){admin=false;render()}}catch(_){}}},300000);
 
 // ---------- boot ----------
 const HINTS={
@@ -1062,7 +1082,7 @@ function makeDb(){
     const cred=await new Promise((res,rej)=>{const off=firebase.auth().onAuthStateChanged(u=>{if(u){off();res(u)}},rej);if(!firebase.auth().currentUser)firebase.auth().signInAnonymously().catch(rej)});
     uid=cred.uid; db=makeDb();
     try{const u=await fs.doc("unlocks/"+uid).get();unlocked=u.exists}catch(_){unlocked=false}
-    try{const a=await fs.doc("admins/"+uid).get();admin=a.exists}catch(_){admin=false}
+    try{const a=await fs.doc("admins/"+uid).get();admin=a.exists&&a.data().ym===todayKey().slice(0,7)}catch(_){admin=false}
     if(admin) unlocked=true;
     document.getElementById("ro").hidden=unlocked;
   }catch(e){console.warn(e);showErr(e);ready={cfg:true,stay:true,tasks:true,logs:true};render();return}
