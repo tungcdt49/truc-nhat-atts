@@ -116,13 +116,13 @@ function makeLogic(cfg, today) {
 }
 
 // ---------- soạn tin ----------
-function buildCard({ cfg, tasks, notes, today, mode, appUrl }) {
-  const { isOff, effective, away } = makeLogic(cfg, today);
-  const ABS_R = { om: "ốm", ct: "công tác", phep: "nghỉ phép", khac: "vắng" };
-  const reminders = cfg.reminders ?? 2, fine = cfg.fine ?? 50000;
+const GROUPS = [["vp", "Cả văn phòng"], ["stay", "Ở lại văn phòng"]];
+function groupLines(gcfg, gtasks, today) {
+  const { isOff, effective, away } = makeLogic(gcfg, today);
+  const reminders = gcfg.reminders ?? 2, fine = gcfg.fine ?? 50000;
   const label = { day: "", week: " (trong tuần)", month: " (trong tháng)" };
   const lines = [];
-  const sorted = [...tasks].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const sorted = [...gtasks].sort((a, b) => (a.order || 0) - (b.order || 0));
   for (const t of sorted) {
     if (t.freq === "day" && isOff(today)) continue;
     const e = effective(t);
@@ -137,6 +137,21 @@ function buildCard({ cfg, tasks, notes, today, mode, appUrl }) {
     lines.push({ text: `**${t.name}**${label[t.freq]}: **${e.person}**${extra}`, warn: e.miss > 0 });
     if (e.fined) lines.push({ text: `${e.fined} đã quên quá ${reminders} lần việc "${t.name}" và bị phạt ${money(fine)}.`, warn: true });
   }
+  return { lines, away, off: isOff(today) };
+}
+
+function buildCard({ cfg, cfgStay, tasks, notes, today, mode, appUrl }) {
+  const ABS_R = { om: "ốm", ct: "công tác", phep: "nghỉ phép", khac: "vắng" };
+  const groupOf = (t) => (t.group === "stay" ? "stay" : "vp");
+  const sections = GROUPS.map(([g, title]) => {
+    const gcfg = g === "stay" ? { ...cfg, members: cfgStay?.members || [], offDays: cfgStay?.offDays || [] } : cfg;
+    return { g, title, gcfg, ...groupLines(gcfg, tasks.filter((t) => groupOf(t) === g), today) };
+  });
+  const lines = sections.flatMap((x) => x.lines);
+  const awayMap = new Map();
+  sections.forEach((x) => x.away.forEach((a) => awayMap.set(a.id, { ...a, name: (x.gcfg.members || []).find((m) => m.id === a.memberId)?.name })));
+  const away = [...awayMap.values()];
+  const withHeaders = sections.filter((x) => x.lines.length).length > 1 || sections[1].lines.length > 0;
 
   const open = notes.filter((n) => !n.done);
   const owe = {};
@@ -152,15 +167,19 @@ function buildCard({ cfg, tasks, notes, today, mode, appUrl }) {
     { type: "TextBlock", isSubtle: true, spacing: "None", wrap: true, text: "ATTS · Văn phòng Ocean Park 1" },
   ];
   if (lines.length) {
-    lines.forEach((l) => body.push({ type: "TextBlock", wrap: true, text: "- " + l.text, color: l.warn ? "Warning" : "Default", spacing: "Small" }));
+    for (const x of sections) {
+      if (!x.lines.length) continue;
+      if (withHeaders) body.push({ type: "TextBlock", weight: "Bolder", spacing: "Medium", text: x.title });
+      x.lines.forEach((l) => body.push({ type: "TextBlock", wrap: true, text: "- " + l.text, color: l.warn ? "Warning" : "Default", spacing: "Small" }));
+    }
     body.push({ type: "TextBlock", wrap: true, isSubtle: true, size: "Small",
       text: "Làm xong nhớ mở app bấm \"Đã làm xong\" để chuyển lượt cho người tiếp theo." });
-  } else if (isOff(today)) {
+  } else if (sections.every((x) => x.off)) {
     body.push({ type: "TextBlock", wrap: true, text: "Hôm nay là ngày nghỉ, không có việc trực." });
   }
   if (mode === "sang" && away.length) {
     body.push({ type: "TextBlock", wrap: true, isSubtle: true, spacing: "Small",
-      text: "Đang nghỉ: " + away.map((a) => `${(cfg.members || []).find((x) => x.id === a.memberId)?.name} (${ABS_R[a.reason] || "vắng"}, đến ${dShort(a.to)})`).join("; ") });
+      text: "Đang nghỉ: " + away.map((a) => `${a.name} (${ABS_R[a.reason] || "vắng"}, đến ${dShort(a.to)})`).join("; ") });
   }
   if (mode === "sang" && open.length) {
     body.push({ type: "TextBlock", weight: "Bolder", text: `Việc phát sinh đang chờ (${open.length})`, spacing: "Medium" });
@@ -183,16 +202,17 @@ function buildCard({ cfg, tasks, notes, today, mode, appUrl }) {
 async function main() {
   const { today, hour } = vnNow();
   const mode = (process.env.MODE || "").trim() || (hour < 12 ? "sang" : "chieu");
-  let cfg, tasks, notes;
+  let cfg, cfgStay, tasks, notes;
   if (process.env.MOCK) {
-    ({ cfg, tasks, notes } = JSON.parse(await (await import("node:fs/promises")).readFile(process.env.MOCK, "utf8")));
+    ({ cfg, cfgStay, tasks, notes } = JSON.parse(await (await import("node:fs/promises")).readFile(process.env.MOCK, "utf8")));
   } else {
     const token = await signIn();
     cfg = (await getDoc(token, "config/main")) || {};
+    cfgStay = (await getDoc(token, "config/stay").catch(() => null)) || {};
     tasks = await listCol(token, "tasks");
     notes = await listCol(token, "notes").catch(() => []);
   }
-  const msg = buildCard({ cfg, tasks, notes, today: process.env.TODAY || today, mode, appUrl: process.env.APP_URL || "" });
+  const msg = buildCard({ cfg, cfgStay, tasks, notes, today: process.env.TODAY || today, mode, appUrl: process.env.APP_URL || "" });
   if (!msg) { console.log(`[${mode}] Không có gì cần nhắc hôm nay.`); return; }
   if (process.env.DRY_RUN || !process.env.TEAMS_WEBHOOK_URL) {
     console.log(JSON.stringify(msg, null, 2));
